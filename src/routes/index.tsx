@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { createFileRoute } from "@tanstack/react-router";
@@ -80,7 +80,7 @@ export const Route = createFileRoute("/")({
 });
 
 function HomePage() {
-  const { tabs, activeTabId, responses, loading, docs, addTab, setActiveTab } =
+  const { tabs, activeTabId, responses, loading, docs, addTab, setActiveTab, closeTab, isDirty, saveTab } =
     useRequestStore();
   const { saveAllDirty, getUnsavedTabs } = useRequestStore();
   const { workspaces, activeWorkspaceId, loadWorkspaces, setActiveWorkspace, deleteWorkspace } =
@@ -108,6 +108,7 @@ function HomePage() {
   const [repoSelectorOpen, setRepoSelectorOpen] = useState(false);
   const [envManagerOpen, setEnvManagerOpen] = useState(false);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+  const [tabCloseConfirmId, setTabCloseConfirmId] = useState<string | null>(null);
   const [newEnvName, setNewEnvName] = useState("");
   const [newVarKey, setNewVarKey] = useState("");
   const [newVarValue, setNewVarValue] = useState("");
@@ -162,6 +163,18 @@ function HomePage() {
       unlisten.then((fn) => fn());
     };
   }, []);
+
+  const tryCloseTab = useCallback((tabId: string) => {
+    if (isDirty(tabId)) {
+      setTabCloseConfirmId(tabId);
+    } else {
+      closeTab(tabId);
+    }
+  }, [isDirty, closeTab]);
+
+  const tabToClose = tabCloseConfirmId
+    ? tabs.find((t) => t.id === tabCloseConfirmId) ?? null
+    : null;
 
   const handleImportFromGitHub = () => {
     setWsMenuOpen(false);
@@ -342,7 +355,7 @@ function HomePage() {
         <ResizablePanel defaultSize="80%" minSize="40%">
           <div className="flex flex-col h-full">
             {/* TabBar — shown when there are any tabs */}
-            {tabs.length > 0 && <TabBar />}
+            {tabs.length > 0 && <TabBar onCloseTab={tryCloseTab} />}
 
             {/* Content area */}
             <div className="flex-1 min-h-0">
@@ -613,10 +626,11 @@ function HomePage() {
               The following requests have unsaved changes:
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
+          <ul className="list-disc list-inside space-y-1.5 text-sm text-muted-foreground py-2">
             {getUnsavedTabs().map((tab) => (
-              <li key={tab.id} className="font-mono text-xs">
-                {tab.method} {tab.url || tab.name}
+              <li key={tab.id} className="text-xs">
+                <span className="font-mono font-semibold text-foreground">{tab.name}</span>
+                <span className="text-muted-foreground/60 ml-1.5">{tab.method} {tab.url}</span>
               </li>
             ))}
           </ul>
@@ -638,6 +652,47 @@ function HomePage() {
                 setCloseConfirmOpen(false);
                 await saveAllDirty();
                 await getCurrentWindow().close();
+              }}
+            >
+              Save &amp; Close
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Tab close confirmation dialog */}
+      <AlertDialog open={tabCloseConfirmId !== null} onOpenChange={(open) => { if (!open) setTabCloseConfirmId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unsaved Changes</AlertDialogTitle>
+            <AlertDialogDescription>
+              {tabToClose && (
+                <>
+                  <span className="font-semibold text-foreground">{tabToClose.name}</span> has unsaved changes. What would you like to do?
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setTabCloseConfirmId(null)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (tabCloseConfirmId) closeTab(tabCloseConfirmId);
+                setTabCloseConfirmId(null);
+              }}
+            >
+              Discard
+            </AlertDialogAction>
+            <AlertDialogAction
+              onClick={async () => {
+                if (tabCloseConfirmId) {
+                  await saveTab(tabCloseConfirmId);
+                  closeTab(tabCloseConfirmId);
+                }
+                setTabCloseConfirmId(null);
               }}
             >
               Save &amp; Close

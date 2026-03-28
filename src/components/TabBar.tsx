@@ -5,10 +5,22 @@ import { cn } from "@/lib/utils";
 import { useRequestStore } from "@/store/requestStore";
 
 
-export function TabBar() {
+interface TabBarProps {
+  onCloseTab?: (tabId: string) => void;
+}
+
+export function TabBar({ onCloseTab }: TabBarProps) {
   const { tabs, activeTabId, setActiveTab, closeTab, addTab, pinTab, isDirty, originalSnapshots } = useRequestStore();
   // Subscribe to originalSnapshots to re-render when dirty state changes
   void originalSnapshots;
+
+  const handleCloseTab = (tabId: string) => {
+    if (onCloseTab) {
+      onCloseTab(tabId);
+    } else {
+      closeTab(tabId);
+    }
+  };
 
   // Cmd+W = close active tab, Cmd+T/N = new tab (handled in parent, here for close)
   useEffect(() => {
@@ -17,12 +29,12 @@ export function TabBar() {
       if (!meta) return;
       if (e.key === "w") {
         e.preventDefault();
-        if (activeTabId) closeTab(activeTabId);
+        if (activeTabId) handleCloseTab(activeTabId);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeTabId, closeTab]);
+  }, [activeTabId, handleCloseTab]);
 
   return (
     <div className="flex items-center border-b bg-muted/10 overflow-x-auto shrink-0">
@@ -64,14 +76,14 @@ export function TabBar() {
                   title="Unsaved changes (click to close)"
                   onClick={(e) => {
                     e.stopPropagation();
-                    closeTab(tab.id);
+                    handleCloseTab(tab.id);
                   }}
                 >●</span>
               ) : (
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    closeTab(tab.id);
+                    handleCloseTab(tab.id);
                   }}
                   className={cn(
                     "text-muted-foreground hover:text-foreground rounded-sm p-0.5 hover:bg-muted/60 opacity-0 group-hover:opacity-100 transition-opacity",
