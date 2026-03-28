@@ -1,0 +1,7 @@
+[env]
+SDKROOT = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+MACOSX_DEPLOYMENT_TARGET = "14.0"
+
+[target.aarch64-apple-darwin]
+linker = "/usr/bin/cc"
+rustflags = ["-L", "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib"]

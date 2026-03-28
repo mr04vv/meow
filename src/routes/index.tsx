@@ -1,0 +1,652 @@
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { createFileRoute } from "@tanstack/react-router";
+import {
+  CheckIcon,
+  ChevronsUpDownIcon,
+  GithubIcon,
+  PlusIcon,
+  SettingsIcon,
+  Trash2Icon,
+} from "lucide-react";
+import { toast } from "sonner";
+import { CollectionView } from "@/components/CollectionView";
+import { GithubLoginDialog } from "@/components/GithubLoginDialog";
+import { RepoSelector } from "@/components/RepoSelector";
+import { RequestEditor } from "@/components/RequestEditor";
+import { ResponseViewer } from "@/components/ResponseViewer";
+import { Sidebar } from "@/components/Sidebar";
+import { TabBar } from "@/components/TabBar";
+import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+import { Separator } from "@/components/ui/separator";
+import { Toaster } from "@/components/ui/sonner";
+import { cn } from "@/lib/utils";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useCollectionStore } from "@/store/collectionStore";
+import type { GithubRepo, GithubTreeEntry } from "@/store/githubStore";
+import { useGithubStore } from "@/store/githubStore";
+import { useRequestStore } from "@/store/requestStore";
+import { useWorkspaceStore } from "@/store/workspaceStore";
+import type { ParsedOpenApi } from "@/types/openapi";
+
+export const Route = createFileRoute("/")({
+  component: HomePage,
+});
+
+function HomePage() {
+  const { tabs, activeTabId, responses, loading, docs, addTab, setActiveTab } =
+    useRequestStore();
+  const { saveAllDirty, getUnsavedTabs } = useRequestStore();
+  const { workspaces, activeWorkspaceId, loadWorkspaces, setActiveWorkspace, deleteWorkspace } =
+    useWorkspaceStore();
+  const {
+    activeCollectionId,
+    setActiveCollection,
+    loadCollections,
+    createCollection,
+    generateFromOpenApi,
+    environments,
+    activeEnvironmentId,
+    setActiveEnvironment,
+    createEnvironment,
+    deleteEnvironment,
+    variables,
+    loadVariables,
+    upsertVariable,
+    deleteVariable,
+  } = useCollectionStore();
+  const { authStatus, checkAuthStatus } = useGithubStore();
+
+  const [wsMenuOpen, setWsMenuOpen] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [repoSelectorOpen, setRepoSelectorOpen] = useState(false);
+  const [envManagerOpen, setEnvManagerOpen] = useState(false);
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+  const [newEnvName, setNewEnvName] = useState("");
+  const [newVarKey, setNewVarKey] = useState("");
+  const [newVarValue, setNewVarValue] = useState("");
+  const [newVarSecret, setNewVarSecret] = useState(false);
+
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
+  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
+
+  // Determine right panel view mode
+  const viewMode: "collection" | "request" | "welcome" = activeTab
+    ? "request"
+    : activeCollectionId
+      ? "collection"
+      : "welcome";
+
+  useEffect(() => {
+    loadWorkspaces();
+    checkAuthStatus();
+  }, [loadWorkspaces, checkAuthStatus]);
+
+  // Load collections when workspace changes
+  useEffect(() => {
+    if (activeWorkspaceId) {
+      loadCollections(activeWorkspaceId);
+    }
+  }, [activeWorkspaceId, loadCollections]);
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta) return;
+      if (e.key === "t" || e.key === "n") {
+        e.preventDefault();
+        addTab();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [addTab]);
+
+  // Window close confirmation when there are unsaved tabs
+  useEffect(() => {
+    const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
+      const unsaved = useRequestStore.getState().getUnsavedTabs();
+      if (unsaved.length > 0) {
+        event.preventDefault();
+        setCloseConfirmOpen(true);
+      }
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  const handleImportFromGitHub = () => {
+    setWsMenuOpen(false);
+    if (authStatus?.authenticated) {
+      setRepoSelectorOpen(true);
+    } else {
+      setLoginOpen(true);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-screen overflow-hidden bg-background text-foreground">
+      {/* Header */}
+      <header className="flex items-center px-3 h-10 border-b shrink-0 bg-muted/20 gap-2">
+        <span className="text-sm font-semibold select-none">🐱 Meow</span>
+
+        <Separator orientation="vertical" className="h-5" />
+
+        {/* Workspace selector */}
+        <Popover open={wsMenuOpen} onOpenChange={setWsMenuOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              role="combobox"
+              aria-expanded={wsMenuOpen}
+              className="h-7 text-xs w-52 justify-between border-dashed"
+            >
+              <span className="truncate">
+                {activeWorkspace?.name ?? "Select Workspace..."}
+              </span>
+              <ChevronsUpDownIcon className="size-3 opacity-50 shrink-0 ml-1" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-52 p-0" align="start">
+            <Command>
+              <CommandInput
+                placeholder="Search workspaces..."
+                className="h-8 text-xs"
+              />
+              <CommandList>
+                <CommandEmpty className="py-3 text-center text-xs text-muted-foreground">
+                  No workspaces
+                </CommandEmpty>
+                {workspaces.length > 0 && (
+                  <CommandGroup>
+                    {workspaces.map((ws) => (
+                      <CommandItem
+                        key={ws.id}
+                        value={ws.name}
+                        onSelect={() => {
+                          setActiveWorkspace(ws.id);
+                          setActiveTab(null);
+                          setWsMenuOpen(false);
+                        }}
+                        className="text-xs"
+                      >
+                        <CheckIcon
+                          className={cn(
+                            "size-3 mr-2 shrink-0",
+                            activeWorkspaceId === ws.id
+                              ? "opacity-100"
+                              : "opacity-0",
+                          )}
+                        />
+                        {ws.name}
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                )}
+                <CommandSeparator />
+                <CommandGroup>
+                  <CommandItem
+                    onSelect={handleImportFromGitHub}
+                    className="text-xs gap-2"
+                  >
+                    <GithubIcon className="size-3 shrink-0" />
+                    Import from GitHub
+                  </CommandItem>
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+
+        {activeWorkspaceId && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-muted-foreground"
+                title="Manage Workspaces"
+              >
+                <SettingsIcon className="size-3.5" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-56 p-1" align="start">
+              <div className="flex flex-col gap-0.5">
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase px-2 py-1">
+                  Workspaces
+                </p>
+                {workspaces.map((ws) => (
+                  <div
+                    key={ws.id}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/60 group"
+                  >
+                    <span className="text-xs flex-1 truncate">{ws.name}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0"
+                      onClick={async () => {
+                        await deleteWorkspace(ws.id);
+                        if (activeWorkspaceId === ws.id) {
+                          setActiveWorkspace(null);
+                        }
+                      }}
+                      title="Delete workspace"
+                    >
+                      <Trash2Icon className="size-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
+
+        <div className="flex-1" />
+
+        {/* Environment selector (shown when a collection is active) */}
+        {activeCollectionId && (
+          <>
+            <Select
+              value={activeEnvironmentId ?? "__none__"}
+              onValueChange={(v) => {
+                if (v !== "__none__" && activeCollectionId) {
+                  setActiveEnvironment(activeCollectionId, v);
+                }
+              }}
+            >
+              <SelectTrigger className="h-7 text-xs w-36 border-dashed">
+                <SelectValue placeholder="No Environment" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">
+                  <span className="text-muted-foreground">No Environment</span>
+                </SelectItem>
+                {environments.map((env) => (
+                  <SelectItem key={env.id} value={env.id}>
+                    {env.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground"
+              onClick={() => setEnvManagerOpen(true)}
+              title="Manage Environments"
+            >
+              <SettingsIcon className="size-3.5" />
+            </Button>
+          </>
+        )}
+      </header>
+
+      {/* Main layout */}
+      <ResizablePanelGroup orientation="horizontal" className="flex-1">
+        <ResizablePanel defaultSize="20%" minSize="15%" maxSize="35%">
+          <Sidebar />
+        </ResizablePanel>
+
+        <ResizableHandle withHandle />
+
+        <ResizablePanel defaultSize="80%" minSize="40%">
+          <div className="flex flex-col h-full">
+            {/* TabBar — shown when there are any tabs */}
+            {tabs.length > 0 && <TabBar />}
+
+            {/* Content area */}
+            <div className="flex-1 min-h-0">
+              {viewMode === "request" && activeTab ? (
+                <ResizablePanelGroup orientation="horizontal" className="h-full">
+                  <ResizablePanel defaultSize="50%" minSize="20%">
+                    <RequestEditor tab={activeTab} />
+                  </ResizablePanel>
+                  <ResizableHandle withHandle />
+                  <ResizablePanel defaultSize="50%" minSize="20%">
+                    <ResponseViewer
+                      response={
+                        activeTabId
+                          ? (responses[activeTabId] ?? null)
+                          : null
+                      }
+                      loading={
+                        activeTabId ? (loading[activeTabId] ?? false) : false
+                      }
+                      docsJson={
+                        activeTabId ? (docs[activeTabId] ?? null) : null
+                      }
+                      tab={activeTab}
+                    />
+                  </ResizablePanel>
+                </ResizablePanelGroup>
+              ) : viewMode === "collection" && activeCollectionId ? (
+                <CollectionView />
+              ) : (
+                <div className="flex items-center justify-center h-full text-muted-foreground">
+                  <div className="flex flex-col items-center gap-3 text-center">
+                    <span className="text-5xl select-none">🐱</span>
+                    <p className="text-sm font-medium">Welcome to Meow</p>
+                    <p className="text-xs text-muted-foreground/70">
+                      Select a workspace or import from GitHub to get started
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
+
+      {/* Dialogs */}
+      <GithubLoginDialog open={loginOpen} onClose={() => setLoginOpen(false)} />
+      <RepoSelector
+        open={repoSelectorOpen}
+        onClose={() => setRepoSelectorOpen(false)}
+        onSelectFiles={async (repo: GithubRepo, branch: string, files: GithubTreeEntry[], collectionName: string) => {
+          setRepoSelectorOpen(false);
+          if (files.length === 0) return;
+
+          const [owner, repoName] = repo.full_name.split("/");
+          try {
+            const workspace = await useWorkspaceStore.getState().createWorkspace(collectionName);
+            const rootCollection = await createCollection(collectionName, workspace.id);
+
+            for (const file of files) {
+              try {
+                const content = (await invoke("github_get_file_content", {
+                  owner,
+                  repo: repoName,
+                  path: file.path,
+                  gitRef: branch,
+                })) as { content: string; path: string };
+
+                const spec = (await invoke("parse_openapi", {
+                  content: content.content,
+                  filename: file.path,
+                })) as ParsedOpenApi;
+
+                const baseUrl = spec.servers[0]?.url;
+                await generateFromOpenApi(spec, baseUrl, rootCollection.id, undefined, workspace.id);
+              } catch (e) {
+                toast.error(`Failed to process ${file.path}: ${String(e)}`);
+              }
+            }
+
+            toast.success(`Imported "${collectionName}" successfully`);
+            setActiveWorkspace(workspace.id);
+            await loadCollections(workspace.id);
+            setActiveCollection(rootCollection.id);
+          } catch (e) {
+            toast.error(`Failed to import: ${String(e)}`);
+          }
+        }}
+      />
+
+      {/* Environment Manager Dialog */}
+      <Dialog open={envManagerOpen} onOpenChange={setEnvManagerOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Manage Environments</DialogTitle>
+          </DialogHeader>
+
+          <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
+            {/* Add Environment */}
+            <div className="flex items-center gap-2">
+              <Input
+                placeholder="New environment name (e.g., dev, staging, prod)"
+                value={newEnvName}
+                onChange={(e) => setNewEnvName(e.target.value)}
+                className="h-8 text-xs flex-1"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newEnvName.trim() && activeCollectionId) {
+                    createEnvironment(activeCollectionId, newEnvName.trim());
+                    setNewEnvName("");
+                  }
+                }}
+              />
+              <Button
+                size="sm"
+                className="h-8 text-xs gap-1"
+                disabled={!newEnvName.trim() || !activeCollectionId}
+                onClick={() => {
+                  if (activeCollectionId && newEnvName.trim()) {
+                    createEnvironment(activeCollectionId, newEnvName.trim());
+                    setNewEnvName("");
+                  }
+                }}
+              >
+                <PlusIcon className="size-3" />
+                Add
+              </Button>
+            </div>
+
+            {/* Environment Tabs */}
+            {environments.length > 0 ? (
+              <Tabs
+                value={activeEnvironmentId ?? environments[0]?.id}
+                onValueChange={(v) => {
+                  if (activeCollectionId) {
+                    setActiveEnvironment(activeCollectionId, v);
+                  }
+                }}
+                className="flex-1 min-h-0 flex flex-col"
+              >
+                <TabsList className="h-8 bg-muted/30 w-full justify-start gap-0 shrink-0">
+                  {environments.map((env) => (
+                    <TabsTrigger key={env.id} value={env.id} className="text-xs h-7 px-3 gap-1.5">
+                      {env.name}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteEnvironment(env.id);
+                        }}
+                        className="text-muted-foreground/50 hover:text-destructive ml-1"
+                        title="Delete environment"
+                      >
+                        <Trash2Icon className="size-2.5" />
+                      </button>
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+
+                {environments.map((env) => (
+                  <TabsContent key={env.id} value={env.id} className="flex-1 min-h-0 m-0 mt-2">
+                    <div className="flex flex-col gap-2 h-full">
+                      <Label className="text-[10px] uppercase text-muted-foreground tracking-wide">
+                        Variables
+                      </Label>
+
+                      {/* Variables list */}
+                      <div className="flex-1 min-h-0 overflow-auto">
+                        <div className="rounded border border-border overflow-hidden">
+                          <table className="w-full text-[12px]">
+                            <thead>
+                              <tr className="border-b border-border bg-muted/30">
+                                <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">Key</th>
+                                <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">Value</th>
+                                <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground w-16">Secret</th>
+                                <th className="w-8"></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {variables.map((v) => (
+                                <tr key={v.id} className="border-b border-border last:border-0 hover:bg-muted/20">
+                                  <td className="px-3 py-1">
+                                    <span className="font-mono text-foreground">{v.key}</span>
+                                  </td>
+                                  <td className="px-3 py-1">
+                                    <span className="font-mono text-muted-foreground">
+                                      {v.is_secret ? "••••••••" : v.value}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-1 text-center">
+                                    {v.is_secret && <span className="text-yellow-500 text-[10px]">secret</span>}
+                                  </td>
+                                  <td className="px-1 py-1">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-5 w-5 text-muted-foreground hover:text-destructive"
+                                      onClick={() => deleteVariable(v.id)}
+                                    >
+                                      <Trash2Icon className="size-3" />
+                                    </Button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      {/* Add variable */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Input
+                          placeholder="KEY"
+                          value={newVarKey}
+                          onChange={(e) => setNewVarKey(e.target.value)}
+                          className="h-7 text-xs font-mono flex-1"
+                        />
+                        <Input
+                          placeholder="value"
+                          value={newVarValue}
+                          onChange={(e) => setNewVarValue(e.target.value)}
+                          className="h-7 text-xs font-mono flex-1"
+                        />
+                        <div className="flex items-center gap-1">
+                          <Checkbox
+                            id="new-var-secret"
+                            checked={newVarSecret}
+                            onCheckedChange={(v) => setNewVarSecret(!!v)}
+                            className="size-3.5"
+                          />
+                          <Label htmlFor="new-var-secret" className="text-[10px] text-muted-foreground">
+                            Secret
+                          </Label>
+                        </div>
+                        <Button
+                          size="sm"
+                          className="h-7 text-xs"
+                          disabled={!newVarKey.trim()}
+                          onClick={async () => {
+                            if (newVarKey.trim()) {
+                              await upsertVariable(env.id, newVarKey.trim(), newVarValue, newVarSecret);
+                              setNewVarKey("");
+                              setNewVarValue("");
+                              setNewVarSecret(false);
+                              await loadVariables(env.id);
+                            }
+                          }}
+                        >
+                          <PlusIcon className="size-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  </TabsContent>
+                ))}
+              </Tabs>
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground">
+                No environments yet. Add one above.
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Close confirmation dialog */}
+      <AlertDialog open={closeConfirmOpen} onOpenChange={setCloseConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unsaved Changes</AlertDialogTitle>
+            <AlertDialogDescription>
+              The following requests have unsaved changes:
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
+            {getUnsavedTabs().map((tab) => (
+              <li key={tab.id} className="font-mono text-xs">
+                {tab.method} {tab.url || tab.name}
+              </li>
+            ))}
+          </ul>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setCloseConfirmOpen(false)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={async () => {
+                setCloseConfirmOpen(false);
+                await getCurrentWindow().close();
+              }}
+            >
+              Discard &amp; Close
+            </AlertDialogAction>
+            <AlertDialogAction
+              onClick={async () => {
+                setCloseConfirmOpen(false);
+                await saveAllDirty();
+                await getCurrentWindow().close();
+              }}
+            >
+              Save &amp; Close
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Toaster position="bottom-right" />
+    </div>
+  );
+}
