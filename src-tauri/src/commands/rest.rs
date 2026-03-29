@@ -8,6 +8,7 @@ use crate::error::AppError;
 use crate::storage::DbState;
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RestRequest {
     pub method: String,
     pub url: String,
@@ -22,6 +23,7 @@ pub struct RestRequest {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RestResponse {
     pub status: u16,
     pub status_text: String,
