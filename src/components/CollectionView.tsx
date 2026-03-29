@@ -589,16 +589,20 @@ function VariableValueInput({
     setValue(initialValue);
   }, [initialValue]);
 
+  const handleSave = () => {
+    if (value !== initialValue) {
+      onSave(value);
+    }
+  };
+
   return (
     <Input
       value={value}
       onChange={(e) => setValue(e.target.value)}
-      onBlur={() => {
-        if (value !== initialValue) onSave(value);
-      }}
+      onBlur={handleSave}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
-          if (value !== initialValue) onSave(value);
+          handleSave();
           (e.target as HTMLInputElement).blur();
         }
       }}
