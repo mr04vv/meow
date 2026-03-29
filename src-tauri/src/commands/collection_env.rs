@@ -204,12 +204,27 @@ pub async fn upsert_variable_value(
     value: String,
 ) -> Result<(), AppError> {
     let conn = state.0.lock().map_err(|_| AppError::Custom("DB lock poisoned".into()))?;
-    let id = Uuid::new_v4().to_string();
-    conn.execute(
-        "INSERT OR REPLACE INTO collection_variable_values (id, variable_key_id, environment_id, value) \
-         VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![id, variable_key_id, environment_id, value],
-    )?;
+
+    // Check if a value already exists for this key + env combination
+    let existing_id: Option<String> = conn.query_row(
+        "SELECT id FROM collection_variable_values WHERE variable_key_id = ?1 AND environment_id = ?2",
+        rusqlite::params![variable_key_id, environment_id],
+        |row| row.get(0),
+    ).ok();
+
+    if let Some(id) = existing_id {
+        conn.execute(
+            "UPDATE collection_variable_values SET value = ?1 WHERE id = ?2",
+            rusqlite::params![value, id],
+        )?;
+    } else {
+        let id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO collection_variable_values (id, variable_key_id, environment_id, value) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![id, variable_key_id, environment_id, value],
+        )?;
+    }
+
     Ok(())
 }
 

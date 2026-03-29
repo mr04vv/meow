@@ -444,8 +444,8 @@ function HomePage() {
                     environmentId: localEnv.id,
                   });
                 }
-              } catch {
-                // Non-critical — env setup failure shouldn't block import
+              } catch (envErr) {
+                console.error("[Import] Failed to set up environment:", envErr);
               }
             }
 
