@@ -4,8 +4,10 @@ import {
   ChevronRightIcon,
   FolderIcon,
   FolderOpenIcon,
+  FolderPlusIcon,
   LogOutIcon,
   MoreHorizontalIcon,
+  PlusIcon,
   RefreshCwIcon,
   Trash2Icon,
   UserCircle2Icon,
@@ -13,6 +15,12 @@ import {
 } from "lucide-react";
 import { MethodBadge } from "@/components/MethodBadge";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import type { Collection, SavedRequest } from "@/store/collectionStore";
@@ -32,6 +40,7 @@ export function Sidebar() {
     loadRequests,
     deleteCollection,
     setActiveCollection,
+    createCollection,
   } = useCollectionStore();
   const {
     activeWorkspaceId,
@@ -39,6 +48,9 @@ export function Sidebar() {
   const { addTab, openPreviewTab, setActiveTab, updateTab } = useRequestStore();
 
   const [parseError, setParseError] = useState<string | null>(null);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [newCollectionName, setNewCollectionName] = useState("");
+  const [creatingCollection, setCreatingCollection] = useState(false);
   const [expandedCollections, setExpandedCollections] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -134,18 +146,78 @@ export function Sidebar() {
         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
           Collections
         </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-5 w-5 text-muted-foreground"
-          onClick={async () => {
-            await loadCollections(activeWorkspaceId ?? undefined);
-          }}
-          title="Refresh"
-          disabled={collLoading}
-        >
-          <RefreshCwIcon className={`size-3 ${collLoading ? "animate-spin" : ""}`} />
-        </Button>
+        <div className="flex items-center gap-0.5">
+          {activeWorkspaceId && (
+            <Popover open={addMenuOpen} onOpenChange={setAddMenuOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5 text-muted-foreground"
+                  title="Add Collection"
+                >
+                  <PlusIcon className="size-3" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-56 p-2" align="end">
+                <div className="flex flex-col gap-2">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase">
+                    New Collection
+                  </p>
+                  <div className="flex gap-1.5">
+                    <Input
+                      placeholder="Collection name"
+                      value={newCollectionName}
+                      onChange={(e) => setNewCollectionName(e.target.value)}
+                      onKeyDown={async (e) => {
+                        if (e.key === "Enter" && newCollectionName.trim() && activeWorkspaceId) {
+                          setCreatingCollection(true);
+                          const col = await createCollection(newCollectionName.trim(), activeWorkspaceId);
+                          await loadCollections(activeWorkspaceId);
+                          setActiveCollection(col.id);
+                          setNewCollectionName("");
+                          setAddMenuOpen(false);
+                          setCreatingCollection(false);
+                        }
+                      }}
+                      className="h-7 text-xs flex-1"
+                      disabled={creatingCollection}
+                    />
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs px-2"
+                      disabled={!newCollectionName.trim() || creatingCollection}
+                      onClick={async () => {
+                        if (!activeWorkspaceId) return;
+                        setCreatingCollection(true);
+                        const col = await createCollection(newCollectionName.trim(), activeWorkspaceId);
+                        await loadCollections(activeWorkspaceId);
+                        setActiveCollection(col.id);
+                        setNewCollectionName("");
+                        setAddMenuOpen(false);
+                        setCreatingCollection(false);
+                      }}
+                    >
+                      <FolderPlusIcon className="size-3" />
+                    </Button>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-5 w-5 text-muted-foreground"
+            onClick={async () => {
+              await loadCollections(activeWorkspaceId ?? undefined);
+            }}
+            title="Refresh"
+            disabled={collLoading}
+          >
+            <RefreshCwIcon className={`size-3 ${collLoading ? "animate-spin" : ""}`} />
+          </Button>
+        </div>
       </div>
 
       {/* Collection tree for active workspace */}
