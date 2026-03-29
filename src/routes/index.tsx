@@ -6,39 +6,21 @@ import {
   CheckIcon,
   ChevronsUpDownIcon,
   GithubIcon,
-  PlusIcon,
   SettingsIcon,
   Trash2Icon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { CollectionView } from "@/components/CollectionView";
+import { EnvironmentManagerDialog } from "@/components/EnvironmentManagerDialog";
 import { GithubLoginDialog } from "@/components/GithubLoginDialog";
 import { RepoSelector } from "@/components/RepoSelector";
 import { RequestEditor } from "@/components/RequestEditor";
 import { ResponseViewer } from "@/components/ResponseViewer";
 import { Sidebar } from "@/components/Sidebar";
 import { TabBar } from "@/components/TabBar";
+import { TabCloseConfirmDialog } from "@/components/TabCloseConfirmDialog";
+import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { Button } from "@/components/ui/button";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Command,
   CommandEmpty,
@@ -80,9 +62,8 @@ export const Route = createFileRoute("/")({
 });
 
 function HomePage() {
-  const { tabs, activeTabId, responses, loading, docs, addTab, setActiveTab, closeTab, isDirty, saveTab } =
+  const { tabs, activeTabId, responses, loading, docs, addTab, setActiveTab, closeTab, isDirty } =
     useRequestStore();
-  const { saveAllDirty, getUnsavedTabs } = useRequestStore();
   const { workspaces, activeWorkspaceId, loadWorkspaces, setActiveWorkspace, deleteWorkspace } =
     useWorkspaceStore();
   const {
@@ -94,12 +75,6 @@ function HomePage() {
     environments,
     activeEnvironmentId,
     setActiveEnvironment,
-    createEnvironment,
-    deleteEnvironment,
-    variables,
-    loadVariables,
-    upsertVariable,
-    deleteVariable,
   } = useCollectionStore();
   const { authStatus, checkAuthStatus } = useGithubStore();
 
@@ -109,10 +84,6 @@ function HomePage() {
   const [envManagerOpen, setEnvManagerOpen] = useState(false);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [tabCloseConfirmId, setTabCloseConfirmId] = useState<string | null>(null);
-  const [newEnvName, setNewEnvName] = useState("");
-  const [newVarKey, setNewVarKey] = useState("");
-  const [newVarValue, setNewVarValue] = useState("");
-  const [newVarSecret, setNewVarSecret] = useState(false);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
@@ -171,10 +142,6 @@ function HomePage() {
       closeTab(tabId);
     }
   }, [isDirty, closeTab]);
-
-  const tabToClose = tabCloseConfirmId
-    ? tabs.find((t) => t.id === tabCloseConfirmId) ?? null
-    : null;
 
   const handleImportFromGitHub = () => {
     setWsMenuOpen(false);
@@ -445,261 +412,21 @@ function HomePage() {
         }}
       />
 
-      {/* Environment Manager Dialog */}
-      <Dialog open={envManagerOpen} onOpenChange={setEnvManagerOpen}>
-        <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col overflow-hidden">
-          <DialogHeader>
-            <DialogTitle className="text-sm">Manage Environments</DialogTitle>
-          </DialogHeader>
+      <EnvironmentManagerDialog
+        open={envManagerOpen}
+        onClose={() => setEnvManagerOpen(false)}
+        collectionId={activeCollectionId}
+      />
 
-          <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
-            {/* Add Environment */}
-            <div className="flex items-center gap-2">
-              <Input
-                placeholder="New environment name (e.g., dev, staging, prod)"
-                value={newEnvName}
-                onChange={(e) => setNewEnvName(e.target.value)}
-                className="h-8 text-xs flex-1"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && newEnvName.trim() && activeCollectionId) {
-                    createEnvironment(activeCollectionId, newEnvName.trim());
-                    setNewEnvName("");
-                  }
-                }}
-              />
-              <Button
-                size="sm"
-                className="h-8 text-xs gap-1"
-                disabled={!newEnvName.trim() || !activeCollectionId}
-                onClick={() => {
-                  if (activeCollectionId && newEnvName.trim()) {
-                    createEnvironment(activeCollectionId, newEnvName.trim());
-                    setNewEnvName("");
-                  }
-                }}
-              >
-                <PlusIcon className="size-3" />
-                Add
-              </Button>
-            </div>
+      <UnsavedChangesDialog
+        open={closeConfirmOpen}
+        onClose={() => setCloseConfirmOpen(false)}
+      />
 
-            {/* Environment Tabs */}
-            {environments.length > 0 ? (
-              <Tabs
-                value={activeEnvironmentId ?? environments[0]?.id}
-                onValueChange={(v) => {
-                  if (activeCollectionId) {
-                    setActiveEnvironment(activeCollectionId, v);
-                  }
-                }}
-                className="flex-1 min-h-0 flex flex-col"
-              >
-                <TabsList className="h-8 bg-muted/30 w-full justify-start gap-0 shrink-0">
-                  {environments.map((env) => (
-                    <TabsTrigger key={env.id} value={env.id} className="text-xs h-7 px-3 gap-1.5">
-                      {env.name}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteEnvironment(env.id);
-                        }}
-                        className="text-muted-foreground/50 hover:text-destructive ml-1"
-                        title="Delete environment"
-                      >
-                        <Trash2Icon className="size-2.5" />
-                      </button>
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-
-                {environments.map((env) => (
-                  <TabsContent key={env.id} value={env.id} className="flex-1 min-h-0 m-0 mt-2">
-                    <div className="flex flex-col gap-2 h-full">
-                      <Label className="text-[10px] uppercase text-muted-foreground tracking-wide">
-                        Variables
-                      </Label>
-
-                      {/* Variables list */}
-                      <div className="flex-1 min-h-0 overflow-auto">
-                        <div className="rounded border border-border overflow-hidden">
-                          <table className="w-full text-[12px]">
-                            <thead>
-                              <tr className="border-b border-border bg-muted/30">
-                                <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">Key</th>
-                                <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">Value</th>
-                                <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground w-16">Secret</th>
-                                <th className="w-8"></th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {variables.map((v) => (
-                                <tr key={v.id} className="border-b border-border last:border-0 hover:bg-muted/20">
-                                  <td className="px-3 py-1">
-                                    <span className="font-mono text-foreground">{v.key}</span>
-                                  </td>
-                                  <td className="px-3 py-1">
-                                    <span className="font-mono text-muted-foreground">
-                                      {v.is_secret ? "••••••••" : v.value}
-                                    </span>
-                                  </td>
-                                  <td className="px-3 py-1 text-center">
-                                    {v.is_secret && <span className="text-yellow-500 text-[10px]">secret</span>}
-                                  </td>
-                                  <td className="px-1 py-1">
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-5 w-5 text-muted-foreground hover:text-destructive"
-                                      onClick={() => deleteVariable(v.id)}
-                                    >
-                                      <Trash2Icon className="size-3" />
-                                    </Button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-
-                      {/* Add variable */}
-                      <div className="flex items-center gap-2 shrink-0">
-                        <Input
-                          placeholder="KEY"
-                          value={newVarKey}
-                          onChange={(e) => setNewVarKey(e.target.value)}
-                          className="h-7 text-xs font-mono flex-1"
-                        />
-                        <Input
-                          placeholder="value"
-                          value={newVarValue}
-                          onChange={(e) => setNewVarValue(e.target.value)}
-                          className="h-7 text-xs font-mono flex-1"
-                        />
-                        <div className="flex items-center gap-1">
-                          <Checkbox
-                            id="new-var-secret"
-                            checked={newVarSecret}
-                            onCheckedChange={(v) => setNewVarSecret(!!v)}
-                            className="size-3.5"
-                          />
-                          <Label htmlFor="new-var-secret" className="text-[10px] text-muted-foreground">
-                            Secret
-                          </Label>
-                        </div>
-                        <Button
-                          size="sm"
-                          className="h-7 text-xs"
-                          disabled={!newVarKey.trim()}
-                          onClick={async () => {
-                            if (newVarKey.trim()) {
-                              await upsertVariable(env.id, newVarKey.trim(), newVarValue, newVarSecret);
-                              setNewVarKey("");
-                              setNewVarValue("");
-                              setNewVarSecret(false);
-                              await loadVariables(env.id);
-                            }
-                          }}
-                        >
-                          <PlusIcon className="size-3" />
-                        </Button>
-                      </div>
-                    </div>
-                  </TabsContent>
-                ))}
-              </Tabs>
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground">
-                No environments yet. Add one above.
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Close confirmation dialog */}
-      <AlertDialog open={closeConfirmOpen} onOpenChange={setCloseConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Unsaved Changes</AlertDialogTitle>
-            <AlertDialogDescription>
-              The following requests have unsaved changes:
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <ul className="list-disc list-inside space-y-1.5 text-sm text-muted-foreground py-2">
-            {getUnsavedTabs().map((tab) => (
-              <li key={tab.id} className="text-xs">
-                <span className="font-mono font-semibold text-foreground">{tab.name}</span>
-                <span className="text-muted-foreground/60 ml-1.5">{tab.method} {tab.url}</span>
-              </li>
-            ))}
-          </ul>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setCloseConfirmOpen(false)}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={async () => {
-                setCloseConfirmOpen(false);
-                await getCurrentWindow().close();
-              }}
-            >
-              Discard &amp; Close
-            </AlertDialogAction>
-            <AlertDialogAction
-              onClick={async () => {
-                setCloseConfirmOpen(false);
-                await saveAllDirty();
-                await getCurrentWindow().close();
-              }}
-            >
-              Save &amp; Close
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Tab close confirmation dialog */}
-      <AlertDialog open={tabCloseConfirmId !== null} onOpenChange={(open) => { if (!open) setTabCloseConfirmId(null); }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Unsaved Changes</AlertDialogTitle>
-            <AlertDialogDescription>
-              {tabToClose && (
-                <>
-                  <span className="font-semibold text-foreground">{tabToClose.name}</span> has unsaved changes. What would you like to do?
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setTabCloseConfirmId(null)}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => {
-                if (tabCloseConfirmId) closeTab(tabCloseConfirmId);
-                setTabCloseConfirmId(null);
-              }}
-            >
-              Discard
-            </AlertDialogAction>
-            <AlertDialogAction
-              onClick={async () => {
-                if (tabCloseConfirmId) {
-                  await saveTab(tabCloseConfirmId);
-                  closeTab(tabCloseConfirmId);
-                }
-                setTabCloseConfirmId(null);
-              }}
-            >
-              Save &amp; Close
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <TabCloseConfirmDialog
+        tabId={tabCloseConfirmId}
+        onClose={() => setTabCloseConfirmId(null)}
+      />
 
       <Toaster position="bottom-right" />
     </div>

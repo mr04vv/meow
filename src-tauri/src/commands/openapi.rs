@@ -208,6 +208,13 @@ fn parse_paths(doc: &Value, _version: &str) -> Vec<PathInfo> {
         return vec![];
     };
 
+    // Build schemas map for $ref resolution (support both OAS3 and Swagger 2)
+    let schemas: serde_json::Map<String, Value> = {
+        let oas3 = doc["components"]["schemas"].as_object();
+        let oas2 = doc["definitions"].as_object();
+        oas3.or(oas2).cloned().unwrap_or_default()
+    };
+
     const HTTP_METHODS: &[&str] = &["get", "post", "put", "patch", "delete", "head", "options", "trace"];
 
     paths_obj
@@ -220,6 +227,34 @@ fn parse_paths(doc: &Value, _version: &str) -> Vec<PathInfo> {
                     if op.is_null() {
                         return None;
                     }
+
+                    // Resolve $ref in parameters
+                    let parameters = op["parameters"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|p| resolve_refs(p, &schemas))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    // Resolve $ref in requestBody
+                    let request_body = if op["requestBody"].is_null() {
+                        None
+                    } else {
+                        Some(resolve_refs(&op["requestBody"], &schemas))
+                    };
+
+                    // Resolve $ref in responses
+                    let responses = op["responses"]
+                        .as_object()
+                        .map(|o| {
+                            o.iter()
+                                .map(|(k, v)| (k.clone(), resolve_refs(v, &schemas)))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
                     Some(OperationInfo {
                         method: method.to_uppercase(),
                         operation_id: op["operationId"].as_str().map(|s| s.to_string()),
@@ -233,23 +268,9 @@ fn parse_paths(doc: &Value, _version: &str) -> Vec<PathInfo> {
                                     .collect()
                             })
                             .unwrap_or_default(),
-                        parameters: op["parameters"]
-                            .as_array()
-                            .cloned()
-                            .unwrap_or_default(),
-                        request_body: if op["requestBody"].is_null() {
-                            None
-                        } else {
-                            Some(op["requestBody"].clone())
-                        },
-                        responses: op["responses"]
-                            .as_object()
-                            .map(|o| {
-                                o.iter()
-                                    .map(|(k, v)| (k.clone(), v.clone()))
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
+                        parameters,
+                        request_body,
+                        responses,
                         security: op["security"]
                             .as_array()
                             .cloned()
@@ -264,6 +285,88 @@ fn parse_paths(doc: &Value, _version: &str) -> Vec<PathInfo> {
             }
         })
         .collect()
+}
+
+/// Recursively walk a JSON value and replace any `{"$ref": "#/components/schemas/Foo"}`
+/// (or `#/definitions/Foo`) with the actual schema from the components map.
+/// Also handles `allOf` by merging all sub-schemas' properties into a single object schema.
+fn resolve_refs(value: &Value, schemas: &serde_json::Map<String, Value>) -> Value {
+    resolve_refs_inner(value, schemas, 0)
+}
+
+fn resolve_refs_inner(value: &Value, schemas: &serde_json::Map<String, Value>, depth: u8) -> Value {
+    if depth > 8 {
+        // Guard against circular references
+        return value.clone();
+    }
+
+    match value {
+        Value::Object(map) => {
+            // If this node is a $ref, resolve it
+            if let Some(ref_str) = map.get("$ref").and_then(|v| v.as_str()) {
+                let schema_name = ref_str
+                    .trim_start_matches('#')
+                    .trim_start_matches('/')
+                    .split('/')
+                    .last()
+                    .unwrap_or("");
+                if let Some(resolved) = schemas.get(schema_name) {
+                    return resolve_refs_inner(resolved, schemas, depth + 1);
+                }
+                // Unknown $ref — return as-is
+                return value.clone();
+            }
+
+            // Handle allOf: merge all sub-schemas' properties into one object schema
+            if let Some(all_of) = map.get("allOf").and_then(|v| v.as_array()) {
+                let mut merged_props = serde_json::Map::new();
+                let mut required: Vec<Value> = Vec::new();
+                for sub in all_of {
+                    let resolved_sub = resolve_refs_inner(sub, schemas, depth + 1);
+                    if let Some(props) = resolved_sub["properties"].as_object() {
+                        for (k, v) in props {
+                            merged_props.insert(k.clone(), v.clone());
+                        }
+                    }
+                    if let Some(req) = resolved_sub["required"].as_array() {
+                        required.extend_from_slice(req);
+                    }
+                }
+                let mut result = serde_json::Map::new();
+                result.insert("type".to_string(), Value::String("object".to_string()));
+                result.insert("properties".to_string(), Value::Object(merged_props));
+                if !required.is_empty() {
+                    result.insert("required".to_string(), Value::Array(required));
+                }
+                return Value::Object(result);
+            }
+
+            // Handle oneOf / anyOf: resolve $ref in each option, keep as array of alternatives
+            for key in &["oneOf", "anyOf"] {
+                if let Some(variants) = map.get(*key).and_then(|v| v.as_array()) {
+                    let resolved_variants: Vec<Value> = variants
+                        .iter()
+                        .map(|v| resolve_refs_inner(v, schemas, depth + 1))
+                        .collect();
+                    let mut result = serde_json::Map::new();
+                    result.insert(key.to_string(), Value::Array(resolved_variants));
+                    return Value::Object(result);
+                }
+            }
+
+            // Recursively resolve all fields
+            let resolved_map: serde_json::Map<String, Value> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), resolve_refs_inner(v, schemas, depth + 1)))
+                .collect();
+            Value::Object(resolved_map)
+        }
+        Value::Array(arr) => {
+            Value::Array(arr.iter().map(|v| resolve_refs_inner(v, schemas, depth + 1)).collect())
+        }
+        // Primitives pass through unchanged
+        other => other.clone(),
+    }
 }
 
 fn parse_schemas(doc: &Value, version: &str) -> HashMap<String, Value> {

@@ -20,6 +20,10 @@ export default defineConfig(({ mode }) => ({
               __dirname,
               "./src/lib/tauri-mock.ts",
             ),
+            "@tauri-apps/api/window": path.resolve(
+              __dirname,
+              "./src/lib/tauri-window-mock.ts",
+            ),
           }
         : {}),
     },

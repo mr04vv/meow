@@ -270,7 +270,23 @@ function CollectionNode({
   const isExpanded = expanded.has(collection.id);
   const collRequests = requests[collection.id] ?? [];
 
-  const handleClick = async () => {
+  const handleChevronClick = async (e: { stopPropagation: () => void }) => {
+    e.stopPropagation();
+    if (isSubfolder) {
+      if (!isExpanded && !requests[collection.id]) {
+        await loadRequests(collection.id);
+      }
+      onSubfolderToggle(collection.id);
+    } else {
+      // Root collection chevron: toggle expand/collapse only
+      if (!isExpanded && !requests[collection.id]) {
+        await loadRequests(collection.id);
+      }
+      onSubfolderToggle(collection.id);
+    }
+  };
+
+  const handleRowClick = async () => {
     if (isSubfolder) {
       // Subfolder: expand/collapse only
       if (!isExpanded && !requests[collection.id]) {
@@ -288,13 +304,19 @@ function CollectionNode({
       <div
         className="flex items-center gap-1 py-1 hover:bg-muted/50 cursor-pointer group pr-2"
         style={{ paddingLeft: `${8 + depth * 12}px` }}
-        onClick={handleClick}
+        onClick={handleRowClick}
       >
-        {isExpanded ? (
-          <ChevronDownIcon className="size-3 text-muted-foreground shrink-0" />
-        ) : (
-          <ChevronRightIcon className="size-3 text-muted-foreground shrink-0" />
-        )}
+        <button
+          onClick={handleChevronClick}
+          className="shrink-0 text-muted-foreground p-0.5 hover:text-foreground"
+          aria-label={isExpanded ? "Collapse" : "Expand"}
+        >
+          {isExpanded ? (
+            <ChevronDownIcon className="size-3" />
+          ) : (
+            <ChevronRightIcon className="size-3" />
+          )}
+        </button>
         {isExpanded ? (
           <FolderOpenIcon className="size-3.5 text-muted-foreground shrink-0" />
         ) : (

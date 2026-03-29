@@ -9,10 +9,10 @@ export default defineConfig({
     viewport: { width: 1280, height: 800 },
   },
   webServer: {
-    command: "pnpm dev",
+    command: "pnpm dev:e2e",
     port: 5173,
-    reuseExistingServer: true,
-    timeout: 10000,
+    reuseExistingServer: !process.env.CI,
+    timeout: 30000,
   },
   projects: [
     {
