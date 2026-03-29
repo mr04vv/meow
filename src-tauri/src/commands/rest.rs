@@ -115,16 +115,16 @@ fn resolve_auth_headers(
     };
 
     if auth_type == "cognito" {
-        // Fetch stored Cognito token and apply as Bearer
+        // Fetch stored Cognito id_token and apply as Bearer
         let token_row = conn.query_row(
-            "SELECT access_token FROM cognito_tokens WHERE collection_id = ?1",
+            "SELECT id_token FROM cognito_tokens WHERE collection_id = ?1",
             rusqlite::params![collection_id],
             |row| row.get::<_, String>(0),
         );
 
-        if let Ok(access_token) = token_row {
+        if let Ok(id_token) = token_row {
             let mut headers = HashMap::new();
-            headers.insert("Authorization".to_string(), format!("Bearer {}", access_token));
+            headers.insert("Authorization".to_string(), format!("Bearer {}", id_token));
             return Ok((headers, HashMap::new()));
         }
         return Ok((HashMap::new(), HashMap::new()));
