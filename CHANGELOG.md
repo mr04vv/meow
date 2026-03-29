@@ -7,6 +7,7 @@ All notable changes to Meow will be documented in this file.
 ### Added
 - **auth_config の AES-256-GCM 暗号化**: Cognito パスワード等の認証情報を暗号化して SQLite に保存。アプリ固有の暗号化キーを初回起動時に自動生成。復号化はデータ読み取り時に自動実行。レガシーデータ（平文）とも後方互換
 - **同一 Workspace に Collection 追加**: サイドバーの「+」ボタンから新しい Collection を作成可能。名前を入力して Enter or ボタンクリックで作成
+- **DB マイグレーション機能**: バージョン管理方式のスキーママイグレーション。起動時に未適用のマイグレーションを自動実行。今後のスキーマ変更で DB 削除が不要に
 
 ## [0.1.0] - 2026-03-29
 

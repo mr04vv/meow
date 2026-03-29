@@ -7,7 +7,19 @@ use crate::error::AppResult;
 #[allow(dead_code)]
 pub struct DbState(pub Mutex<Connection>);
 
-const MIGRATIONS: &str = r#"
+/// Each migration has a version number and SQL to execute.
+/// Migrations are applied in order, skipping any already applied.
+struct Migration {
+    version: u32,
+    description: &'static str,
+    sql: &'static str,
+}
+
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        description: "Initial schema",
+        sql: r#"
 CREATE TABLE IF NOT EXISTS workspaces (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -73,7 +85,6 @@ CREATE TABLE IF NOT EXISTS requests (
     FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
 );
 
--- Track which OpenAPI operation generated each request (used for resync diff detection)
 CREATE TABLE IF NOT EXISTS request_openapi_meta (
     request_id TEXT PRIMARY KEY,
     operation_id TEXT NOT NULL,
@@ -104,7 +115,15 @@ CREATE TABLE IF NOT EXISTS app_config (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-"#;
+"#,
+    },
+    // Future migrations go here:
+    // Migration {
+    //     version: 2,
+    //     description: "Add some_new_column to collections",
+    //     sql: "ALTER TABLE collections ADD COLUMN some_new_column TEXT;",
+    // },
+];
 
 pub fn init_database(app: &AppHandle) -> AppResult<Connection> {
     let app_data_dir = app
@@ -117,7 +136,40 @@ pub fn init_database(app: &AppHandle) -> AppResult<Connection> {
     let db_path = app_data_dir.join("meow.db");
     let conn = Connection::open(&db_path)?;
 
-    conn.execute_batch(MIGRATIONS)?;
+    // Ensure migrations tracking table exists (bootstrap)
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS app_config (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+    )?;
+
+    // Get current schema version
+    let current_version: u32 = conn
+        .query_row(
+            "SELECT value FROM app_config WHERE key = 'schema_version'",
+            [],
+            |row| {
+                let val: String = row.get(0)?;
+                Ok(val.parse::<u32>().unwrap_or(0))
+            },
+        )
+        .unwrap_or(0);
+
+    // Apply pending migrations
+    for migration in MIGRATIONS {
+        if migration.version > current_version {
+            log::info!(
+                "Applying migration v{}: {}",
+                migration.version,
+                migration.description
+            );
+            conn.execute_batch(migration.sql)?;
+
+            // Update schema version
+            conn.execute(
+                "INSERT OR REPLACE INTO app_config (key, value) VALUES ('schema_version', ?1)",
+                rusqlite::params![migration.version.to_string()],
+            )?;
+        }
+    }
 
     // Initialize encryption key if not exists
     let has_key: bool = conn
@@ -137,7 +189,11 @@ pub fn init_database(app: &AppHandle) -> AppResult<Connection> {
         )?;
     }
 
-    log::info!("Database initialized at: {:?}", db_path);
+    log::info!(
+        "Database initialized at: {:?} (schema v{})",
+        db_path,
+        MIGRATIONS.last().map(|m| m.version).unwrap_or(0)
+    );
 
     Ok(conn)
 }
