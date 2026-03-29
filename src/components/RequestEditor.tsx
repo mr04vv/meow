@@ -6,7 +6,6 @@ import { json } from "@codemirror/lang-json";
 import { AuthEditor } from "@/components/AuthEditor";
 import { CodeMirrorUrlBar } from "@/components/CodeMirrorUrlBar";
 import { KeyValueEditor } from "@/components/KeyValueEditor";
-import { VariableSummaryBar } from "@/components/VariableSummaryBar";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -23,24 +22,33 @@ import { useRequestStore } from "@/store/requestStore";
 const bodyEditorTheme = EditorView.theme({
   "&": {
     backgroundColor: "transparent",
-    color: "hsl(var(--foreground))",
+    color: "#e5e5e5",
     fontSize: "13px",
     height: "100%",
   },
   ".cm-gutters": {
     backgroundColor: "transparent",
     border: "none",
-    color: "hsl(var(--muted-foreground))",
+    color: "#737373",
+  },
+  ".cm-activeLineGutter": {
+    backgroundColor: "transparent",
   },
   ".cm-activeLine": {
     backgroundColor: "rgba(255,255,255,0.03)",
   },
   ".cm-cursor": {
-    borderLeftColor: "hsl(var(--foreground))",
+    borderLeftColor: "#e5e5e5",
   },
   ".cm-scroller": {
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
     overflow: "auto",
+  },
+  ".cm-selectionBackground": {
+    backgroundColor: "rgba(255,255,255,0.1) !important",
+  },
+  "&.cm-focused .cm-selectionBackground": {
+    backgroundColor: "rgba(255,255,255,0.15) !important",
   },
   "&.cm-focused": {
     outline: "none",
@@ -57,9 +65,10 @@ const METHOD_COLORS: Record<HttpMethod, string> = {
 
 interface Props {
   tab: RequestTab;
+  hideUrlBar?: boolean;
 }
 
-export function RequestEditor({ tab }: Props) {
+export function RequestEditor({ tab, hideUrlBar }: Props) {
   const { updateTab, setResponse, setLoading, loading, pinTab, saveTab } = useRequestStore();
   const { collections, variables } = useCollectionStore();
   const isLoading = loading[tab.id] ?? false;
@@ -200,8 +209,8 @@ export function RequestEditor({ tab }: Props) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* URL bar */}
-      <div className="flex items-center gap-2 p-3 border-b">
+      {/* URL bar — hidden when parent renders it separately */}
+      {!hideUrlBar && <div className="flex items-center gap-2 p-3 border-b">
         <div className="flex flex-1 items-center border rounded-lg overflow-hidden h-9">
           <Select
             value={tab.method}
@@ -262,24 +271,8 @@ export function RequestEditor({ tab }: Props) {
             </>
           )}
         </Button>
-      </div>
+      </div>}
 
-      {/* Variable summary bar */}
-      {tab.url.includes("{{") && (
-        <VariableSummaryBar
-          text={tab.url}
-          variables={variableMap}
-          onUpdateVariable={async (key, value) => {
-            const { activeEnvironmentId } = useCollectionStore.getState();
-            if (activeEnvironmentId) {
-              await useCollectionStore.getState().upsertVariable(
-                activeEnvironmentId, key, value, false
-              );
-              await useCollectionStore.getState().loadVariables(activeEnvironmentId);
-            }
-          }}
-        />
-      )}
 
       {/* Request config tabs */}
       <div className="flex-1 overflow-hidden flex flex-col">
@@ -349,6 +342,7 @@ export function RequestEditor({ tab }: Props) {
                 value={tab.body}
                 onChange={(value) => update({ body: value })}
                 extensions={[json(), bodyEditorTheme]}
+                theme="dark"
                 height="100%"
                 className="flex-1 h-full text-sm"
                 basicSetup={{

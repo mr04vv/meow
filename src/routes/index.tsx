@@ -15,6 +15,7 @@ import { EnvironmentManagerDialog } from "@/components/EnvironmentManagerDialog"
 import { GithubLoginDialog } from "@/components/GithubLoginDialog";
 import { RepoSelector } from "@/components/RepoSelector";
 import { RequestEditor } from "@/components/RequestEditor";
+import { RequestUrlBar } from "@/components/RequestUrlBar";
 import { ResponseViewer } from "@/components/ResponseViewer";
 import { Sidebar } from "@/components/Sidebar";
 import { TabBar } from "@/components/TabBar";
@@ -325,30 +326,36 @@ function HomePage() {
             {tabs.length > 0 && <TabBar onCloseTab={tryCloseTab} />}
 
             {/* Content area */}
-            <div className="flex-1 min-h-0">
+            <div className="flex-1 min-h-0 flex flex-col">
               {viewMode === "request" && activeTab ? (
-                <ResizablePanelGroup orientation="horizontal" className="h-full">
-                  <ResizablePanel defaultSize="50%" minSize="20%">
-                    <RequestEditor tab={activeTab} />
-                  </ResizablePanel>
-                  <ResizableHandle withHandle />
-                  <ResizablePanel defaultSize="50%" minSize="20%">
-                    <ResponseViewer
-                      response={
-                        activeTabId
-                          ? (responses[activeTabId] ?? null)
-                          : null
-                      }
-                      loading={
-                        activeTabId ? (loading[activeTabId] ?? false) : false
-                      }
-                      docsJson={
-                        activeTabId ? (docs[activeTabId] ?? null) : null
-                      }
-                      tab={activeTab}
-                    />
-                  </ResizablePanel>
-                </ResizablePanelGroup>
+                <>
+                  {/* URL bar — full width above request/response split */}
+                  <RequestUrlBar tab={activeTab} />
+
+                  {/* Request / Response split */}
+                  <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
+                    <ResizablePanel defaultSize="50%" minSize="20%">
+                      <RequestEditor tab={activeTab} hideUrlBar />
+                    </ResizablePanel>
+                    <ResizableHandle withHandle />
+                    <ResizablePanel defaultSize="50%" minSize="20%">
+                      <ResponseViewer
+                        response={
+                          activeTabId
+                            ? (responses[activeTabId] ?? null)
+                            : null
+                        }
+                        loading={
+                          activeTabId ? (loading[activeTabId] ?? false) : false
+                        }
+                        docsJson={
+                          activeTabId ? (docs[activeTabId] ?? null) : null
+                        }
+                        tab={activeTab}
+                      />
+                    </ResizablePanel>
+                  </ResizablePanelGroup>
+                </>
               ) : viewMode === "collection" && activeCollectionId ? (
                 <CollectionView />
               ) : (

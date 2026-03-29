@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import CodeMirror, { EditorView } from "@uiw/react-codemirror";
-import { Decoration, ViewPlugin, hoverTooltip } from "@codemirror/view";
+import { Decoration, ViewPlugin, hoverTooltip, tooltips } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { EditorState, RangeSetBuilder } from "@codemirror/state";
 
@@ -9,6 +9,7 @@ interface CodeMirrorUrlBarProps {
   onChange: (value: string) => void;
   onSend: () => void;
   variables: Record<string, string>;
+  onUpdateVariable?: (key: string, value: string) => void;
   placeholder?: string;
 }
 
@@ -47,7 +48,10 @@ function variableHighlighter(variables: Record<string, string>) {
   );
 }
 
-function variableHoverTooltip(variables: Record<string, string>) {
+function variableHoverTooltip(
+  variables: Record<string, string>,
+  onUpdateVariable?: (key: string, value: string) => void,
+) {
   return hoverTooltip((view, pos) => {
     const text = view.state.doc.toString();
     VARIABLE_RE.lastIndex = 0;
@@ -63,11 +67,47 @@ function variableHoverTooltip(variables: Record<string, string>) {
           create() {
             const dom = document.createElement("div");
             dom.className = "cm-var-tooltip";
-            if (exists) {
-              dom.innerHTML = `<div style="font-size:11px;color:#888">${varName}</div><div style="font-size:12px;font-family:monospace">${variables[varName]}</div>`;
-            } else {
-              dom.innerHTML = `<div style="font-size:11px;color:#f97316">${varName} — not defined</div>`;
+            dom.style.cssText = "min-width:200px;max-width:320px";
+
+            // Variable name label
+            const nameEl = document.createElement("div");
+            nameEl.style.cssText = "font-size:11px;color:#888;font-weight:600;margin-bottom:4px";
+            nameEl.textContent = varName;
+            dom.appendChild(nameEl);
+
+            if (!exists) {
+              const msg = document.createElement("div");
+              msg.style.cssText = "font-size:11px;color:#f97316;margin-bottom:4px";
+              msg.textContent = "Not defined in active environment";
+              dom.appendChild(msg);
             }
+
+            // Editable input — auto-saves on blur or Enter
+            const input = document.createElement("input");
+            input.type = "text";
+            input.value = exists ? variables[varName] : "";
+            input.placeholder = exists ? "" : "Enter value...";
+            input.style.cssText = "width:100%;height:26px;font-size:12px;font-family:ui-monospace,monospace;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:0 8px;color:#e5e5e5;outline:none;box-sizing:border-box";
+            input.addEventListener("focus", () => { input.style.borderColor = "rgba(255,255,255,0.3)"; });
+
+            const doSave = () => {
+              if (onUpdateVariable && input.value !== (exists ? variables[varName] : "")) {
+                onUpdateVariable(varName, input.value);
+              }
+            };
+
+            input.addEventListener("blur", doSave);
+            input.addEventListener("keydown", (e) => {
+              if (e.key === "Enter") {
+                doSave();
+                input.blur();
+              }
+            });
+
+            setTimeout(() => { input.focus(); }, 50);
+
+            dom.appendChild(input);
+
             return { dom };
           },
         };
@@ -100,9 +140,12 @@ const urlBarTheme = EditorView.theme({
     height: "100%",
   },
   ".cm-scroller": {
-    overflow: "hidden",
+    overflowX: "auto",
+    overflowY: "hidden",
     height: "100%",
     alignItems: "center",
+    scrollbarWidth: "none",
+    "&::-webkit-scrollbar": { display: "none" },
   },
   ".cm-focused": {
     outline: "none",
@@ -117,12 +160,14 @@ export function CodeMirrorUrlBar({
   onChange,
   onSend,
   variables,
+  onUpdateVariable,
   placeholder,
 }: CodeMirrorUrlBarProps) {
   const extensions = useMemo(() => [
     urlBarTheme,
+    tooltips({ parent: document.body }),
     variableHighlighter(variables),
-    variableHoverTooltip(variables),
+    variableHoverTooltip(variables, onUpdateVariable),
     EditorView.domEventHandlers({
       keydown(e) {
         if (e.key === "Enter") {
@@ -145,17 +190,17 @@ export function CodeMirrorUrlBar({
       }
       return tr;
     }),
-    EditorView.lineWrapping,
-  ], [variables, onSend]);
+  ], [variables, onSend, onUpdateVariable]);
 
   return (
     <CodeMirror
       value={value}
       onChange={onChange}
       extensions={extensions}
+      theme="dark"
       placeholder={placeholder}
       basicSetup={false}
-      className="h-full flex-1"
+      className="h-full flex-1 cm-url-bar"
     />
   );
 }
