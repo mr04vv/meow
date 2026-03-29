@@ -77,6 +77,16 @@ body {
   outline-color: var(--ring);
 }
 
+/* CodeMirror background — match app background */
+.cm-theme-dark .cm-editor,
+.cm-editor.cm-focused,
+.cm-editor {
+  background-color: transparent !important;
+}
+.cm-theme-dark .cm-gutters {
+  background-color: transparent !important;
+}
+
 /* Hide scrollbar in URL bar CodeMirror */
 .cm-url-bar .cm-scroller {
   scrollbar-width: none;

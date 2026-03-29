@@ -514,7 +514,7 @@ export function CollectionView() {
             )}
 
             {auth.type === "cognito" && (
-              <CognitoAuthForm auth={auth} onChange={setAuth} />
+              <CognitoAuthForm auth={auth} onChange={setAuth} collectionId={activeCollectionId} />
             )}
 
             {auth.type === "none" && (

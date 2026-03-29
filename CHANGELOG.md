@@ -9,6 +9,9 @@ All notable changes to Meow will be documented in this file.
 - **同一 Workspace に Collection 追加**: サイドバーの「+」ボタンから新しい Collection を作成可能。名前を入力して Enter or ボタンクリックで作成
 - **DB マイグレーション機能**: バージョン管理方式のスキーママイグレーション。起動時に未適用のマイグレーションを自動実行。今後のスキーマ変更で DB 削除が不要に
 
+### Changed
+- **Cognito 認証: User Pool ID を廃止、Region を直接入力に変更**: User Pool ID は Region 抽出のためだけに必要だったので、Region フィールドに簡素化
+
 ### Fixed
 - **環境変数の値が別環境で更新できない**: `upsert_variable_value` が毎回新規 INSERT していた問題を修正。既存行があれば UPDATE するように変更
 - **インポート時の環境セットアップエラーが無視される**: catch ブロックにログ出力を追加

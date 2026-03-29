@@ -20,7 +20,6 @@ export interface AuthConfig {
   apiKeyName?: string;
   apiKeyValue?: string;
   apiKeyIn?: "header" | "query";
-  cognitoUserPoolId?: string;
   cognitoClientId?: string;
   cognitoUsername?: string;
   cognitoPassword?: string;

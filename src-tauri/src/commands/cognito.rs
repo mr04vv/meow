@@ -38,15 +38,6 @@ struct CognitoErrorResponse {
     error_type: Option<String>,
 }
 
-fn extract_region(user_pool_id: &str) -> Result<String, AppError> {
-    user_pool_id
-        .split('_')
-        .next()
-        .map(|s| s.to_string())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| AppError::Custom(format!("Invalid user_pool_id format: {}", user_pool_id)))
-}
-
 fn cognito_endpoint(region: &str) -> String {
     format!(
         "https://cognito-idp.{}.amazonaws.com/",
@@ -121,12 +112,11 @@ fn save_tokens_to_db(
 pub async fn cognito_authenticate(
     state: State<'_, DbState>,
     collection_id: Option<String>,
-    user_pool_id: String,
     client_id: String,
     username: String,
     password: String,
+    region: String,
 ) -> Result<CognitoTokens, AppError> {
-    let region = extract_region(&user_pool_id)?;
 
     let mut auth_params = HashMap::new();
     auth_params.insert("USERNAME", serde_json::Value::String(username));

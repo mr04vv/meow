@@ -10,14 +10,6 @@ interface CognitoToken {
   access_token: string;
   refresh_token: string | null;
   expires_in: number;
-  issued_at: number;
-}
-
-interface StoredToken {
-  id_token: string;
-  access_token: string;
-  refresh_token: string | null;
-  expires_at: number;
 }
 
 type TokenStatus = "not_authenticated" | "valid" | "expired";
@@ -25,43 +17,34 @@ type TokenStatus = "not_authenticated" | "valid" | "expired";
 interface Props {
   auth: AuthConfig;
   onChange: (auth: AuthConfig) => void;
+  collectionId?: string | null;
 }
 
-function deriveRegion(userPoolId: string): string {
-  const match = userPoolId.match(/^([a-z]+-[a-z]+-\d+)_/);
-  return match ? match[1] : "";
-}
-
-export function CognitoAuthForm({ auth, onChange }: Props) {
+export function CognitoAuthForm({ auth, onChange, collectionId }: Props) {
   const [authenticating, setAuthenticating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tokenStatus, setTokenStatus] = useState<TokenStatus>("not_authenticated");
   const [minutesRemaining, setMinutesRemaining] = useState<number | null>(null);
 
-  const userPoolId = auth.cognitoUserPoolId ?? "";
   const clientId = auth.cognitoClientId ?? "";
   const username = auth.cognitoUsername ?? "";
   const password = auth.cognitoPassword ?? "";
-  const region = deriveRegion(userPoolId) || (auth.cognitoRegion ?? "");
+  const region = auth.cognitoRegion ?? "";
 
-  // Load stored token on mount and periodically refresh status
+  // Load stored token status
   useEffect(() => {
-    if (!userPoolId || !clientId) {
-      setTokenStatus("not_authenticated");
-      return;
-    }
+    if (!collectionId) return;
     checkStoredToken();
     const interval = setInterval(checkStoredToken, 30_000);
     return () => clearInterval(interval);
-  }, [userPoolId, clientId]);
+  }, [collectionId]);
 
   const checkStoredToken = async () => {
-    if (!userPoolId || !clientId) return;
+    if (!collectionId) return;
     try {
       const stored = (await invoke("cognito_get_stored_token", {
-        userPoolId,
-        clientId,
-      })) as StoredToken | null;
+        collectionId,
+      })) as { expires_in: number } | null;
 
       if (!stored) {
         setTokenStatus("not_authenticated");
@@ -69,11 +52,9 @@ export function CognitoAuthForm({ auth, onChange }: Props) {
         return;
       }
 
-      const nowSec = Math.floor(Date.now() / 1000);
-      const remaining = stored.expires_at - nowSec;
-      if (remaining > 0) {
+      if (stored.expires_in > 0) {
         setTokenStatus("valid");
-        setMinutesRemaining(Math.floor(remaining / 60));
+        setMinutesRemaining(Math.floor(stored.expires_in / 60));
       } else {
         setTokenStatus("expired");
         setMinutesRemaining(null);
@@ -85,17 +66,16 @@ export function CognitoAuthForm({ auth, onChange }: Props) {
   };
 
   const handleAuthenticate = async () => {
-    if (!userPoolId || !clientId || !username || !password) return;
+    if (!clientId || !username || !password || !region) return;
     setAuthenticating(true);
     setError(null);
     try {
-      const effectiveRegion = region || deriveRegion(userPoolId);
       const result = (await invoke("cognito_authenticate", {
-        userPoolId,
+        collectionId: collectionId ?? null,
         clientId,
         username,
         password,
-        region: effectiveRegion,
+        region,
       })) as CognitoToken;
 
       setTokenStatus("valid");
@@ -111,38 +91,17 @@ export function CognitoAuthForm({ auth, onChange }: Props) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
-        <span className="text-xs text-muted-foreground w-20 shrink-0">
-          User Pool ID
-        </span>
+        <span className="text-xs text-muted-foreground w-20 shrink-0">Region</span>
         <Input
-          placeholder="{{COGNITO_POOL_ID}}"
-          value={userPoolId}
-          onChange={(e) => {
-            const val = e.target.value;
-            const derivedRegion = deriveRegion(val);
-            onChange({
-              ...auth,
-              cognitoUserPoolId: val,
-              cognitoRegion: derivedRegion || auth.cognitoRegion,
-            });
-          }}
+          placeholder="ap-northeast-1"
+          value={region}
+          onChange={(e) => onChange({ ...auth, cognitoRegion: e.target.value })}
           className="font-mono text-xs h-8 flex-1"
         />
       </div>
 
-      {region && (
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground w-20 shrink-0">
-            Region
-          </span>
-          <span className="font-mono text-xs text-muted-foreground">{region}</span>
-        </div>
-      )}
-
       <div className="flex items-center gap-2">
-        <span className="text-xs text-muted-foreground w-20 shrink-0">
-          Client ID
-        </span>
+        <span className="text-xs text-muted-foreground w-20 shrink-0">Client ID</span>
         <Input
           placeholder="{{COGNITO_CLIENT_ID}}"
           value={clientId}
@@ -152,9 +111,7 @@ export function CognitoAuthForm({ auth, onChange }: Props) {
       </div>
 
       <div className="flex items-center gap-2">
-        <span className="text-xs text-muted-foreground w-20 shrink-0">
-          Username
-        </span>
+        <span className="text-xs text-muted-foreground w-20 shrink-0">Username</span>
         <Input
           placeholder="{{COGNITO_USERNAME}}"
           value={username}
@@ -164,9 +121,7 @@ export function CognitoAuthForm({ auth, onChange }: Props) {
       </div>
 
       <div className="flex items-center gap-2">
-        <span className="text-xs text-muted-foreground w-20 shrink-0">
-          Password
-        </span>
+        <span className="text-xs text-muted-foreground w-20 shrink-0">Password</span>
         <Input
           type="password"
           placeholder="{{COGNITO_PASSWORD}}"
@@ -182,13 +137,7 @@ export function CognitoAuthForm({ auth, onChange }: Props) {
           variant="outline"
           className="h-7 text-xs gap-1.5"
           onClick={handleAuthenticate}
-          disabled={
-            authenticating ||
-            !userPoolId ||
-            !clientId ||
-            !username ||
-            !password
-          }
+          disabled={authenticating || !clientId || !username || !password || !region}
         >
           {authenticating ? (
             <>
@@ -203,10 +152,7 @@ export function CognitoAuthForm({ auth, onChange }: Props) {
           )}
         </Button>
 
-        <TokenStatusBadge
-          status={tokenStatus}
-          minutesRemaining={minutesRemaining}
-        />
+        <TokenStatusBadge status={tokenStatus} minutesRemaining={minutesRemaining} />
       </div>
 
       {error && (
@@ -229,8 +175,7 @@ function TokenStatusBadge({
     return (
       <span className="flex items-center gap-1 text-xs text-emerald-500">
         <CheckCircleIcon className="size-3" />
-        Valid
-        {minutesRemaining !== null && ` (${minutesRemaining}m remaining)`}
+        Valid {minutesRemaining !== null && `(${minutesRemaining}m)`}
       </span>
     );
   }
@@ -242,7 +187,5 @@ function TokenStatusBadge({
       </span>
     );
   }
-  return (
-    <span className="text-xs text-muted-foreground">Not authenticated</span>
-  );
+  return <span className="text-xs text-muted-foreground">Not authenticated</span>;
 }
