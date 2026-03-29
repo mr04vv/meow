@@ -21,7 +21,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import type { CollectionVariable } from "@/store/collectionStore";
 import { useCollectionStore } from "@/store/collectionStore";
 import type { AuthConfig } from "@/store/requestStore";
 
@@ -32,13 +31,16 @@ export function CollectionView() {
     activeCollectionId,
     environments,
     activeEnvironmentId,
+    variableKeys,
     variables,
     loadEnvironments,
     createEnvironment,
     setActiveEnvironment,
     deleteEnvironment,
-    upsertVariable,
-    deleteVariable,
+    createVariableKey,
+    deleteVariableKey,
+    upsertVariableValue,
+    loadVariables,
     updateCollectionAuth,
     loadRequests,
   } = useCollectionStore();
@@ -109,26 +111,28 @@ export function CollectionView() {
   }, [activeCollectionId, auth, updateCollectionAuth]);
 
   const handleAddVariable = useCallback(async () => {
-    if (!newKey.trim() || !activeEnvironmentId) return;
+    if (!newKey.trim() || !activeCollectionId || !activeEnvironmentId) return;
     try {
-      await upsertVariable(activeEnvironmentId, newKey.trim(), newValue, newIsSecret);
+      const vk = await createVariableKey(activeCollectionId, newKey.trim(), newIsSecret);
+      await upsertVariableValue(vk.id, activeEnvironmentId, newValue);
+      await loadVariables(activeCollectionId, activeEnvironmentId);
       setNewKey("");
       setNewValue("");
       setNewIsSecret(false);
     } catch (e) {
       toast.error(`Failed to add variable: ${String(e)}`);
     }
-  }, [activeEnvironmentId, newKey, newValue, newIsSecret, upsertVariable]);
+  }, [activeCollectionId, activeEnvironmentId, newKey, newValue, newIsSecret, createVariableKey, upsertVariableValue, loadVariables]);
 
   const handleDeleteVariable = useCallback(
-    async (variable: CollectionVariable) => {
+    async (keyId: string) => {
       try {
-        await deleteVariable(variable.id);
+        await deleteVariableKey(keyId);
       } catch (e) {
         toast.error(`Failed to delete variable: ${String(e)}`);
       }
     },
-    [deleteVariable]
+    [deleteVariableKey]
   );
 
   const handleAddEnvironment = useCallback(async () => {
@@ -153,11 +157,11 @@ export function CollectionView() {
     [deleteEnvironment]
   );
 
-  const toggleReveal = (id: string) => {
+  const toggleReveal = (keyId: string) => {
     setRevealedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(keyId)) next.delete(keyId);
+      else next.add(keyId);
       return next;
     });
   };
@@ -284,7 +288,7 @@ export function CollectionView() {
                 Variables
               </Label>
 
-              {variables.length > 0 && (
+              {variableKeys.length > 0 && (
                 <div className="border rounded-md overflow-hidden">
                   <table className="w-full text-xs">
                     <thead>
@@ -299,25 +303,35 @@ export function CollectionView() {
                       </tr>
                     </thead>
                     <tbody>
-                      {variables.map((v) => {
-                        const revealed = revealedIds.has(v.id);
+                      {variableKeys.map((vk) => {
+                        const v = variables.find((x) => x.key_id === vk.id);
+                        const revealed = revealedIds.has(vk.id);
                         return (
-                          <tr key={v.id} className="border-b last:border-b-0 hover:bg-muted/20">
-                            <td className="px-3 py-2 font-mono">{v.key}</td>
+                          <tr key={vk.id} className="border-b last:border-b-0 hover:bg-muted/20">
+                            <td className="px-3 py-2 font-mono">{vk.key}</td>
                             <td className="px-3 py-2 font-mono">
-                              {v.is_secret && !revealed ? (
+                              {vk.is_secret && !revealed ? (
                                 <span className="text-muted-foreground tracking-widest">
                                   ••••••••
                                 </span>
                               ) : (
-                                v.value
+                                <Input
+                                  value={v?.value ?? ""}
+                                  onChange={async (e) => {
+                                    if (activeCollectionId) {
+                                      await upsertVariableValue(vk.id, activeEnvironmentId, e.target.value);
+                                      await loadVariables(activeCollectionId, activeEnvironmentId);
+                                    }
+                                  }}
+                                  className="h-6 text-xs font-mono border-transparent bg-transparent focus:border-border focus:bg-background px-1"
+                                />
                               )}
                             </td>
                             <td className="px-3 py-2">
                               <div className="flex items-center gap-1 justify-end">
-                                {v.is_secret && (
+                                {vk.is_secret && (
                                   <button
-                                    onClick={() => toggleReveal(v.id)}
+                                    onClick={() => toggleReveal(vk.id)}
                                     className="text-muted-foreground hover:text-foreground p-0.5 rounded"
                                     title={revealed ? "Hide" : "Reveal"}
                                   >
@@ -329,7 +343,7 @@ export function CollectionView() {
                                   </button>
                                 )}
                                 <button
-                                  onClick={() => handleDeleteVariable(v)}
+                                  onClick={() => handleDeleteVariable(vk.id)}
                                   className="text-muted-foreground hover:text-destructive p-0.5 rounded"
                                   title="Delete variable"
                                 >

@@ -30,16 +30,20 @@ export function EnvironmentManagerDialog({
     setActiveEnvironment,
     createEnvironment,
     deleteEnvironment,
+    variableKeys,
     variables,
     loadVariables,
-    upsertVariable,
-    deleteVariable,
+    createVariableKey,
+    deleteVariableKey,
+    upsertVariableValue,
   } = useCollectionStore();
 
   const [newEnvName, setNewEnvName] = useState("");
   const [newVarKey, setNewVarKey] = useState("");
   const [newVarValue, setNewVarValue] = useState("");
   const [newVarSecret, setNewVarSecret] = useState(false);
+
+  const activeEnvId = activeEnvironmentId ?? environments[0]?.id;
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -82,7 +86,7 @@ export function EnvironmentManagerDialog({
           {/* Environment Tabs */}
           {environments.length > 0 ? (
             <Tabs
-              value={activeEnvironmentId ?? environments[0]?.id}
+              value={activeEnvId}
               onValueChange={(v) => {
                 if (collectionId) {
                   setActiveEnvironment(collectionId, v);
@@ -128,31 +132,42 @@ export function EnvironmentManagerDialog({
                             </tr>
                           </thead>
                           <tbody>
-                            {variables.map((v) => (
-                              <tr key={v.id} className="border-b border-border last:border-0 hover:bg-muted/20">
-                                <td className="px-3 py-1">
-                                  <span className="font-mono text-foreground">{v.key}</span>
-                                </td>
-                                <td className="px-3 py-1">
-                                  <span className="font-mono text-muted-foreground">
-                                    {v.is_secret ? "••••••••" : v.value}
-                                  </span>
-                                </td>
-                                <td className="px-3 py-1 text-center">
-                                  {v.is_secret && <span className="text-yellow-500 text-[10px]">secret</span>}
-                                </td>
-                                <td className="px-1 py-1">
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-5 w-5 text-muted-foreground hover:text-destructive"
-                                    onClick={() => deleteVariable(v.id)}
-                                  >
-                                    <Trash2Icon className="size-3" />
-                                  </Button>
-                                </td>
-                              </tr>
-                            ))}
+                            {variableKeys.map((vk) => {
+                              const v = variables.find((x) => x.key_id === vk.id);
+                              return (
+                                <tr key={vk.id} className="border-b border-border last:border-0 hover:bg-muted/20">
+                                  <td className="px-3 py-1">
+                                    <span className="font-mono text-foreground">{vk.key}</span>
+                                  </td>
+                                  <td className="px-3 py-1">
+                                    <Input
+                                      value={v?.value ?? ""}
+                                      onChange={async (e) => {
+                                        await upsertVariableValue(vk.id, env.id, e.target.value);
+                                        if (collectionId) {
+                                          await loadVariables(collectionId, env.id);
+                                        }
+                                      }}
+                                      type={vk.is_secret ? "password" : "text"}
+                                      className="h-6 text-xs font-mono border-transparent bg-transparent focus:border-border focus:bg-background px-1"
+                                    />
+                                  </td>
+                                  <td className="px-3 py-1 text-center">
+                                    {vk.is_secret && <span className="text-yellow-500 text-[10px]">secret</span>}
+                                  </td>
+                                  <td className="px-1 py-1">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-5 w-5 text-muted-foreground hover:text-destructive"
+                                      onClick={() => deleteVariableKey(vk.id)}
+                                    >
+                                      <Trash2Icon className="size-3" />
+                                    </Button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -171,6 +186,7 @@ export function EnvironmentManagerDialog({
                         value={newVarValue}
                         onChange={(e) => setNewVarValue(e.target.value)}
                         className="h-7 text-xs font-mono flex-1"
+                        type={newVarSecret ? "password" : "text"}
                       />
                       <div className="flex items-center gap-1">
                         <Checkbox
@@ -186,14 +202,15 @@ export function EnvironmentManagerDialog({
                       <Button
                         size="sm"
                         className="h-7 text-xs"
-                        disabled={!newVarKey.trim()}
+                        disabled={!newVarKey.trim() || !collectionId}
                         onClick={async () => {
-                          if (newVarKey.trim()) {
-                            await upsertVariable(env.id, newVarKey.trim(), newVarValue, newVarSecret);
+                          if (newVarKey.trim() && collectionId) {
+                            const vk = await createVariableKey(collectionId, newVarKey.trim(), newVarSecret);
+                            await upsertVariableValue(vk.id, env.id, newVarValue);
+                            await loadVariables(collectionId, env.id);
                             setNewVarKey("");
                             setNewVarValue("");
                             setNewVarSecret(false);
-                            await loadVariables(env.id);
                           }
                         }}
                       >

@@ -10,7 +10,8 @@ use commands::collection::{
 use commands::collection_env::{
     create_collection_environment, list_collection_environments,
     set_active_collection_environment, delete_collection_environment,
-    list_collection_variables, upsert_collection_variable, delete_collection_variable,
+    list_variable_keys, create_variable_key, delete_variable_key,
+    get_variables_for_env, upsert_variable_value,
     get_active_collection_variables,
     update_collection_auth, get_collection_auth,
 };
@@ -67,10 +68,13 @@ pub fn run() {
             list_collection_environments,
             set_active_collection_environment,
             delete_collection_environment,
-            // Collection variables
-            list_collection_variables,
-            upsert_collection_variable,
-            delete_collection_variable,
+            // Collection variable keys
+            list_variable_keys,
+            create_variable_key,
+            delete_variable_key,
+            // Collection variable values
+            get_variables_for_env,
+            upsert_variable_value,
             get_active_collection_variables,
             // Collection auth
             update_collection_auth,

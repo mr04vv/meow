@@ -38,12 +38,21 @@ CREATE TABLE IF NOT EXISTS collection_environments (
     FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS collection_variables (
+CREATE TABLE IF NOT EXISTS collection_variable_keys (
     id TEXT PRIMARY KEY,
-    environment_id TEXT NOT NULL,
+    collection_id TEXT NOT NULL,
     key TEXT NOT NULL,
-    value TEXT NOT NULL,
     is_secret INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS collection_variable_values (
+    id TEXT PRIMARY KEY,
+    variable_key_id TEXT NOT NULL,
+    environment_id TEXT NOT NULL,
+    value TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (variable_key_id) REFERENCES collection_variable_keys(id) ON DELETE CASCADE,
     FOREIGN KEY (environment_id) REFERENCES collection_environments(id) ON DELETE CASCADE
 );
 

@@ -123,6 +123,21 @@ const REQUESTS: Record<string, Array<{
   ],
 };
 
+// In-memory stores for variable keys and values
+const VARIABLE_KEYS: Array<{
+  id: string;
+  collection_id: string;
+  key: string;
+  is_secret: boolean;
+}> = [];
+
+const VARIABLE_VALUES: Array<{
+  id: string;
+  variable_key_id: string;
+  environment_id: string;
+  value: string;
+}> = [];
+
 export async function invoke(_cmd: string, _args?: unknown): Promise<unknown> {
   console.warn(`[tauri-mock] invoke("${_cmd}") called outside Tauri`);
 
@@ -144,7 +159,64 @@ export async function invoke(_cmd: string, _args?: unknown): Promise<unknown> {
   }
   if (_cmd === "list_environments") return [];
   if (_cmd === "list_collection_environments") return [];
-  if (_cmd === "list_collection_variables") return [];
+
+  // Variable keys
+  if (_cmd === "list_variable_keys") {
+    const args = _args as { collectionId: string };
+    return VARIABLE_KEYS.filter((k) => k.collection_id === args.collectionId);
+  }
+  if (_cmd === "create_variable_key") {
+    const args = _args as { collectionId: string; key: string; isSecret: boolean };
+    const vk = {
+      id: `vk-${Date.now()}`,
+      collection_id: args.collectionId,
+      key: args.key,
+      is_secret: args.isSecret,
+    };
+    VARIABLE_KEYS.push(vk);
+    return vk;
+  }
+  if (_cmd === "delete_variable_key") {
+    const args = _args as { id: string };
+    const idx = VARIABLE_KEYS.findIndex((k) => k.id === args.id);
+    if (idx !== -1) VARIABLE_KEYS.splice(idx, 1);
+    return null;
+  }
+
+  // Variable values
+  if (_cmd === "get_variables_for_env") {
+    const args = _args as { collectionId: string; environmentId: string };
+    const keys = VARIABLE_KEYS.filter((k) => k.collection_id === args.collectionId);
+    return keys.map((k) => {
+      const val = VARIABLE_VALUES.find(
+        (v) => v.variable_key_id === k.id && v.environment_id === args.environmentId
+      );
+      return {
+        key_id: k.id,
+        key: k.key,
+        value: val?.value ?? "",
+        is_secret: k.is_secret,
+      };
+    });
+  }
+  if (_cmd === "upsert_variable_value") {
+    const args = _args as { variableKeyId: string; environmentId: string; value: string };
+    const existing = VARIABLE_VALUES.find(
+      (v) => v.variable_key_id === args.variableKeyId && v.environment_id === args.environmentId
+    );
+    if (existing) {
+      existing.value = args.value;
+    } else {
+      VARIABLE_VALUES.push({
+        id: `vv-${Date.now()}`,
+        variable_key_id: args.variableKeyId,
+        environment_id: args.environmentId,
+        value: args.value,
+      });
+    }
+    return null;
+  }
+
   if (_cmd === "github_auth_status") return { authenticated: false };
   if (_cmd === "create_workspace") {
     const args = _args as { name: string };

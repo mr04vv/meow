@@ -28,7 +28,7 @@ interface Props {
 
 export function RequestUrlBar({ tab }: Props) {
   const { updateTab, setResponse, setLoading, loading, pinTab, saveTab } = useRequestStore();
-  const { collections, variables } = useCollectionStore();
+  const { collections, variables, variableKeys } = useCollectionStore();
   const isLoading = loading[tab.id] ?? false;
 
   const collection = tab.collectionId
@@ -46,6 +46,14 @@ export function RequestUrlBar({ tab }: Props) {
     }
     return map;
   }, [variables]);
+
+  const variableKeyMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const vk of variableKeys) {
+      map[vk.key] = vk.id;
+    }
+    return map;
+  }, [variableKeys]);
 
   const update = (updates: Partial<RequestTab>) => {
     updateTab(tab.id, updates);
@@ -166,12 +174,13 @@ export function RequestUrlBar({ tab }: Props) {
               onSend={handleSend}
               variables={variableMap}
               onUpdateVariable={async (key, value) => {
-                const { activeEnvironmentId } = useCollectionStore.getState();
-                if (activeEnvironmentId) {
-                  await useCollectionStore.getState().upsertVariable(
-                    activeEnvironmentId, key, value, false
-                  );
-                  await useCollectionStore.getState().loadVariables(activeEnvironmentId);
+                const { activeEnvironmentId, activeCollectionId } = useCollectionStore.getState();
+                const keyId = variableKeyMap[key];
+                if (activeEnvironmentId && keyId) {
+                  await useCollectionStore.getState().upsertVariableValue(keyId, activeEnvironmentId, value);
+                  if (activeCollectionId) {
+                    await useCollectionStore.getState().loadVariables(activeCollectionId, activeEnvironmentId);
+                  }
                 }
               }}
               placeholder="https://api.example.com/endpoint"

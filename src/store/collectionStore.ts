@@ -19,9 +19,15 @@ export interface CollectionEnvironment {
   name: string;
 }
 
-export interface CollectionVariable {
+export interface VariableKey {
   id: string;
-  environment_id: string;
+  collection_id: string;
+  key: string;
+  is_secret: boolean;
+}
+
+export interface VariableWithValue {
+  key_id: string;
   key: string;
   value: string;
   is_secret: boolean;
@@ -70,11 +76,16 @@ interface CollectionState {
   setActiveEnvironment: (collectionId: string, environmentId: string) => Promise<void>;
   deleteEnvironment: (id: string) => Promise<void>;
 
-  // Variables (per environment)
-  variables: CollectionVariable[];
-  loadVariables: (environmentId: string) => Promise<void>;
-  upsertVariable: (environmentId: string, key: string, value: string, isSecret: boolean, id?: string) => Promise<void>;
-  deleteVariable: (id: string) => Promise<void>;
+  // Variable keys (shared across all envs for a collection)
+  variableKeys: VariableKey[];
+  loadVariableKeys: (collectionId: string) => Promise<void>;
+  createVariableKey: (collectionId: string, key: string, isSecret: boolean) => Promise<VariableKey>;
+  deleteVariableKey: (id: string) => Promise<void>;
+
+  // Variable values (per env)
+  variables: VariableWithValue[];
+  loadVariables: (collectionId: string, environmentId: string) => Promise<void>;
+  upsertVariableValue: (variableKeyId: string, environmentId: string, value: string) => Promise<void>;
 
   // Auth
   updateCollectionAuth: (collectionId: string, authType: string | null, authConfig: string | null) => Promise<void>;
@@ -107,7 +118,7 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
     if (id) {
       get().loadEnvironments(id);
     } else {
-      set({ environments: [], activeEnvironmentId: null, variables: [] });
+      set({ environments: [], activeEnvironmentId: null, variableKeys: [], variables: [] });
     }
   },
 
@@ -123,8 +134,9 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
     const activeEnvironmentId =
       collection?.active_environment_id ?? (environments[0]?.id ?? null);
     set({ environments, activeEnvironmentId });
+    await get().loadVariableKeys(collectionId);
     if (activeEnvironmentId) {
-      await get().loadVariables(activeEnvironmentId);
+      await get().loadVariables(collectionId, activeEnvironmentId);
     }
   },
 
@@ -141,7 +153,7 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
         c.id === collectionId ? { ...c, active_environment_id: environmentId } : c
       ),
     }));
-    await get().loadVariables(environmentId);
+    await get().loadVariables(collectionId, environmentId);
   },
 
   deleteEnvironment: async (id) => {
@@ -153,31 +165,56 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
     }
   },
 
+  variableKeys: [],
+
+  loadVariableKeys: async (collectionId) => {
+    const variableKeys = (await invoke("list_variable_keys", {
+      collectionId,
+    })) as VariableKey[];
+    set({ variableKeys });
+  },
+
+  createVariableKey: async (collectionId, key, isSecret) => {
+    const variableKey = (await invoke("create_variable_key", {
+      collectionId,
+      key,
+      isSecret,
+    })) as VariableKey;
+    await get().loadVariableKeys(collectionId);
+    return variableKey;
+  },
+
+  deleteVariableKey: async (id) => {
+    const state = get();
+    await invoke("delete_variable_key", { id });
+    const collectionId = state.activeCollectionId;
+    if (collectionId) {
+      await get().loadVariableKeys(collectionId);
+      if (state.activeEnvironmentId) {
+        await get().loadVariables(collectionId, state.activeEnvironmentId);
+      }
+    }
+  },
+
   variables: [],
 
-  loadVariables: async (environmentId) => {
-    const variables = (await invoke("list_collection_variables", {
+  loadVariables: async (collectionId, environmentId) => {
+    const variables = (await invoke("get_variables_for_env", {
+      collectionId,
       environmentId,
-    })) as CollectionVariable[];
+    })) as VariableWithValue[];
     set({ variables });
   },
 
-  upsertVariable: async (environmentId, key, value, isSecret, id) => {
-    await invoke("upsert_collection_variable", {
+  upsertVariableValue: async (variableKeyId, environmentId, value) => {
+    await invoke("upsert_variable_value", {
+      variableKeyId,
       environmentId,
-      key,
       value,
-      isSecret,
-      id: id ?? null,
     });
-    await get().loadVariables(environmentId);
-  },
-
-  deleteVariable: async (id) => {
     const state = get();
-    await invoke("delete_collection_variable", { id });
-    if (state.activeEnvironmentId) {
-      await get().loadVariables(state.activeEnvironmentId);
+    if (state.activeCollectionId && state.activeEnvironmentId) {
+      await get().loadVariables(state.activeCollectionId, state.activeEnvironmentId);
     }
   },
 

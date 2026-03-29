@@ -429,11 +429,15 @@ function HomePage() {
                 })) as Array<{ id: string; name: string }>;
                 const localEnv = envs.find((e) => e.name === "local");
                 if (localEnv) {
-                  await invoke("upsert_collection_variable", {
-                    environmentId: localEnv.id,
+                  const vk = (await invoke("create_variable_key", {
+                    collectionId: rootCollection.id,
                     key: "BASE_URL",
-                    value: firstServerUrl,
                     isSecret: false,
+                  })) as { id: string };
+                  await invoke("upsert_variable_value", {
+                    variableKeyId: vk.id,
+                    environmentId: localEnv.id,
+                    value: firstServerUrl,
                   });
                   await invoke("set_active_collection_environment", {
                     collectionId: rootCollection.id,
