@@ -65,8 +65,11 @@ export function CognitoAuthForm({ auth, onChange, collectionId }: Props) {
     }
   };
 
+  const DEFAULT_REGION = "ap-northeast-1";
+  const effectiveRegion = region || DEFAULT_REGION;
+
   const handleAuthenticate = async () => {
-    if (!clientId || !username || !password || !region) return;
+    if (!clientId || !username || !password) return;
     setAuthenticating(true);
     setError(null);
     try {
@@ -75,7 +78,7 @@ export function CognitoAuthForm({ auth, onChange, collectionId }: Props) {
         clientId,
         username,
         password,
-        region,
+        region: effectiveRegion,
       })) as CognitoToken;
 
       setTokenStatus("valid");
@@ -137,7 +140,7 @@ export function CognitoAuthForm({ auth, onChange, collectionId }: Props) {
           variant="outline"
           className="h-7 text-xs gap-1.5"
           onClick={handleAuthenticate}
-          disabled={authenticating || !clientId || !username || !password || !region}
+          disabled={authenticating || !clientId || !username || !password}
         >
           {authenticating ? (
             <>

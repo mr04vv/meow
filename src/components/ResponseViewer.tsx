@@ -177,6 +177,11 @@ export function ResponseViewer({ response, loading, docsJson, tab }: Props) {
                         </Badge>
                       )}
                     </TabsTrigger>
+                    {response.debugCurl && (
+                      <TabsTrigger value="curl" className={tabTriggerClass}>
+                        cURL
+                      </TabsTrigger>
+                    )}
                   </TabsList>
                 </div>
 
@@ -211,6 +216,16 @@ export function ResponseViewer({ response, loading, docsJson, tab }: Props) {
                     </div>
                   </ScrollArea>
                 </TabsContent>
+
+                {response.debugCurl && (
+                  <TabsContent value="curl" className="flex-1 overflow-hidden m-0">
+                    <ScrollArea className="h-full">
+                      <pre className="p-4 text-[13px] font-mono whitespace-pre-wrap break-all leading-relaxed text-muted-foreground">
+                        {response.debugCurl}
+                      </pre>
+                    </ScrollArea>
+                  </TabsContent>
+                )}
               </Tabs>
             </div>
           )}

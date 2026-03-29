@@ -16,11 +16,8 @@ pub struct RestRequest {
     pub body: Option<String>,
     pub timeout_ms: Option<u64>,
     pub follow_redirects: Option<bool>,
-    /// Collection ID used to resolve variables and auth
     pub collection_id: Option<String>,
-    /// Auth type for this specific request (None = inherit from collection)
     pub auth_type: Option<String>,
-    /// Auth config JSON for this specific request
     pub auth_config: Option<String>,
 }
 
@@ -33,9 +30,9 @@ pub struct RestResponse {
     pub response_time_ms: u64,
     pub body_size_bytes: u64,
     pub is_json: bool,
+    pub debug_curl: Option<String>,
 }
 
-/// Build the variable map for a request using the collection's active environment variables.
 fn build_variable_map(
     conn: &rusqlite::Connection,
     collection_id: Option<&str>,
@@ -43,7 +40,6 @@ fn build_variable_map(
     let Some(cid) = collection_id else {
         return HashMap::new();
     };
-
     load_active_collection_variables_inner(conn, cid)
         .unwrap_or_default()
         .into_iter()
@@ -51,106 +47,107 @@ fn build_variable_map(
         .collect()
 }
 
-/// Resolve the auth headers/query-params to inject for a request.
-/// If the request has its own auth, use it. Otherwise fall back to collection auth.
-fn resolve_auth_headers(
+/// Auth info resolved from DB (sync)
+struct ResolvedAuth {
+    headers: HashMap<String, String>,
+    query_params: HashMap<String, String>,
+    /// If Cognito, contains the credentials to authenticate
+    cognito_config: Option<CognitoCredentials>,
+}
+
+struct CognitoCredentials {
+    client_id: String,
+    username: String,
+    password: String,
+    region: String,
+}
+
+/// Resolve auth from DB (sync part — no network calls)
+fn resolve_auth_from_db(
     conn: &rusqlite::Connection,
     request: &RestRequest,
     vars: &HashMap<String, String>,
-) -> Result<(HashMap<String, String>, HashMap<String, String>), AppError> {
-    // If the request has explicit auth, use it (no collection fallback needed)
+) -> Result<ResolvedAuth, AppError> {
+    // If the request has explicit auth, use it
     if let Some(auth_type) = &request.auth_type {
         if auth_type != "none" {
             if let Some(auth_config_json) = &request.auth_config {
                 if let Ok(config) = serde_json::from_str::<AuthConfig>(auth_config_json) {
                     let applied = config.apply();
-                    return Ok((applied.headers, applied.query_params));
+                    return Ok(ResolvedAuth {
+                        headers: applied.headers,
+                        query_params: applied.query_params,
+                        cognito_config: None,
+                    });
                 }
             }
         }
-        // auth_type is "none" or config missing — no auth
-        return Ok((HashMap::new(), HashMap::new()));
+        return Ok(ResolvedAuth { headers: HashMap::new(), query_params: HashMap::new(), cognito_config: None });
     }
 
-    // No request-level auth — try to inherit from collection (walk up parent chain)
-    let Some(start_collection_id) = &request.collection_id else {
-        return Ok((HashMap::new(), HashMap::new()));
+    // Walk up parent chain to find collection with auth
+    let Some(start_id) = &request.collection_id else {
+        return Ok(ResolvedAuth { headers: HashMap::new(), query_params: HashMap::new(), cognito_config: None });
     };
 
-    // Walk up parent_id chain to find the collection with auth settings
-    let mut current_id = start_collection_id.clone();
-    let mut col_auth_type: Option<String> = None;
-    let mut col_auth_config: Option<String> = None;
-    let mut auth_collection_id = start_collection_id.clone();
+    let mut current_id = start_id.clone();
+    let mut found_auth_type: Option<String> = None;
+    let mut found_auth_config: Option<String> = None;
 
     for _ in 0..10 {
         let row = conn.query_row(
             "SELECT auth_type, auth_config, parent_id FROM collections WHERE id = ?1",
             rusqlite::params![current_id],
-            |row| {
-                Ok((
-                    row.get::<_, Option<String>>(0)?,
-                    row.get::<_, Option<String>>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                ))
-            },
+            |row| Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            )),
         );
-
         let Ok((at, ac, parent_id)) = row else { break };
-
         if at.is_some() && at.as_deref() != Some("none") {
-            col_auth_type = at;
-            col_auth_config = ac;
-            auth_collection_id = current_id;
+            found_auth_type = at;
+            found_auth_config = ac;
             break;
         }
-
         let Some(pid) = parent_id else { break };
         current_id = pid;
     }
 
-    let Some(auth_type) = col_auth_type else {
-        return Ok((HashMap::new(), HashMap::new()));
+    let Some(auth_type) = found_auth_type else {
+        return Ok(ResolvedAuth { headers: HashMap::new(), query_params: HashMap::new(), cognito_config: None });
     };
 
-    if auth_type == "none" {
-        return Ok((HashMap::new(), HashMap::new()));
-    }
-
-    // Decrypt and expand variables in auth_config
-    let auth_config_str = match col_auth_config {
+    // Decrypt auth_config
+    let auth_config_str = match found_auth_config {
         Some(cfg) => {
-            // Try to decrypt (may be encrypted or legacy plaintext)
             let decrypted = match crate::storage::database::get_encryption_key(conn) {
                 Ok(key) => crate::crypto::decrypt(&cfg, &key).unwrap_or(cfg),
                 Err(_) => cfg,
             };
             interpolate(&decrypted, vars)
         }
-        None => return Ok((HashMap::new(), HashMap::new())),
+        None => return Ok(ResolvedAuth { headers: HashMap::new(), query_params: HashMap::new(), cognito_config: None }),
     };
 
     if auth_type == "cognito" {
-        // Fetch stored Cognito id_token and apply as Bearer (using the collection that has auth)
-        let token_row = conn.query_row(
-            "SELECT id_token FROM cognito_tokens WHERE collection_id = ?1",
-            rusqlite::params![auth_collection_id],
-            |row| row.get::<_, String>(0),
-        );
+        let config: serde_json::Value = serde_json::from_str(&auth_config_str)
+            .unwrap_or(serde_json::Value::Object(Default::default()));
+        let client_id = config["cognitoClientId"].as_str().unwrap_or("").to_string();
+        let username = config["cognitoUsername"].as_str().unwrap_or("").to_string();
+        let password = config["cognitoPassword"].as_str().unwrap_or("").to_string();
+        let region = config["cognitoRegion"].as_str().unwrap_or("ap-northeast-1").to_string();
 
-        if let Ok(id_token) = token_row {
-            let mut headers = HashMap::new();
-            headers.insert("Authorization".to_string(), format!("Bearer {}", id_token));
-            return Ok((headers, HashMap::new()));
-        }
-        return Ok((HashMap::new(), HashMap::new()));
+        return Ok(ResolvedAuth {
+            headers: HashMap::new(),
+            query_params: HashMap::new(),
+            cognito_config: Some(CognitoCredentials { client_id, username, password, region }),
+        });
     }
 
-    // For bearer / api_key / basic: parse the (possibly variable-expanded) auth config
+    // bearer / api_key / basic
     let config_value: serde_json::Value = serde_json::from_str(&auth_config_str)
         .unwrap_or(serde_json::Value::Object(Default::default()));
-
-    // Merge auth_type into the config so AuthConfig can deserialize via its tag
     let mut merged = match config_value {
         serde_json::Value::Object(m) => m,
         _ => Default::default(),
@@ -158,17 +155,49 @@ fn resolve_auth_headers(
     if !merged.contains_key("type") {
         merged.insert("type".to_string(), serde_json::json!(auth_type));
     }
-
     let config: AuthConfig = match serde_json::from_value(serde_json::Value::Object(merged)) {
         Ok(c) => c,
-        Err(_) => return Ok((HashMap::new(), HashMap::new())),
+        Err(_) => return Ok(ResolvedAuth { headers: HashMap::new(), query_params: HashMap::new(), cognito_config: None }),
     };
-
     let applied = config.apply();
-    Ok((applied.headers, applied.query_params))
+    Ok(ResolvedAuth { headers: applied.headers, query_params: applied.query_params, cognito_config: None })
 }
 
-/// Replace {{key}} patterns with values from the map
+/// Authenticate with Cognito and get id_token (async)
+async fn cognito_get_fresh_token(creds: &CognitoCredentials) -> Result<String, AppError> {
+    let endpoint = format!("https://cognito-idp.{}.amazonaws.com/", creds.region);
+    let mut auth_params = HashMap::new();
+    auth_params.insert("USERNAME", serde_json::Value::String(creds.username.clone()));
+    auth_params.insert("PASSWORD", serde_json::Value::String(creds.password.clone()));
+
+    let body = serde_json::json!({
+        "AuthFlow": "USER_PASSWORD_AUTH",
+        "ClientId": creds.client_id,
+        "AuthParameters": auth_params,
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&endpoint)
+        .header("Content-Type", "application/x-amz-json-1.1")
+        .header("X-Amz-Target", "AWSCognitoIdentityProviderService.InitiateAuth")
+        .json(&body)
+        .send()
+        .await
+        .map_err(AppError::from)?;
+
+    if !resp.status().is_success() {
+        let msg = resp.text().await.unwrap_or_default();
+        return Err(AppError::Custom(format!("Cognito auth failed: {}", msg)));
+    }
+
+    let result: serde_json::Value = resp.json().await.map_err(AppError::from)?;
+    result["AuthenticationResult"]["IdToken"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| AppError::Custom("No IdToken in Cognito response".into()))
+}
+
 fn interpolate(text: &str, vars: &HashMap<String, String>) -> String {
     let mut result = text.to_string();
     for (key, value) in vars {
@@ -176,6 +205,24 @@ fn interpolate(text: &str, vars: &HashMap<String, String>) -> String {
         result = result.replace(&placeholder, value);
     }
     result
+}
+
+fn build_curl_command(
+    method: &str,
+    url: &str,
+    headers: &[(String, String)],
+    body: Option<&str>,
+) -> String {
+    let mut parts = vec![format!("curl -X {}", method)];
+    for (k, v) in headers {
+        parts.push(format!("-H '{}: {}'", k, v));
+    }
+    if let Some(b) = body {
+        let escaped = b.replace('\'', "'\\''");
+        parts.push(format!("-d '{}'", escaped));
+    }
+    parts.push(format!("'{}'", url));
+    parts.join(" \\\n  ")
 }
 
 #[tauri::command]
@@ -190,101 +237,113 @@ pub async fn send_rest_request(
 
     let mut client_builder = reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(timeout_ms));
-
     if !follow_redirects {
         client_builder = client_builder.redirect(reqwest::redirect::Policy::none());
     }
-
     let client = client_builder.build().map_err(AppError::Http)?;
 
     let method = reqwest::Method::from_bytes(request.method.as_bytes())
         .unwrap_or(reqwest::Method::GET);
 
-    // Build variable map and resolve auth
-    let (auth_headers, auth_query_params, vars) = {
+    // Phase 1: Sync DB reads (under lock)
+    let (resolved_auth, vars) = {
         let conn = state.0.lock().map_err(|_| AppError::Custom("DB lock poisoned".into()))?;
         let vars = build_variable_map(&conn, request.collection_id.as_deref());
-        let auth = resolve_auth_headers(&conn, &request, &vars)?;
-        (auth.0, auth.1, vars)
+        let auth = resolve_auth_from_db(&conn, &request, &vars)?;
+        (auth, vars)
     };
+    // Lock released here
 
-    // Expand {{variable}} placeholders in URL
+    // Phase 2: Async Cognito auth (if needed)
+    let mut auth_headers = resolved_auth.headers;
+    let auth_query_params = resolved_auth.query_params;
+
+    if let Some(creds) = &resolved_auth.cognito_config {
+        match cognito_get_fresh_token(creds).await {
+            Ok(id_token) => {
+                log::info!("[send_rest_request] Cognito auth success, token len={}", id_token.len());
+                auth_headers.insert("Authorization".to_string(), format!("Bearer {}", id_token));
+            }
+            Err(e) => {
+                log::warn!("[send_rest_request] Cognito auth failed: {}", e);
+            }
+        }
+    }
+
+    // Expand URL
     let expanded_url = interpolate(&request.url, &vars);
-    let mut req_builder = client.request(method, &expanded_url);
+    let mut req_builder = client.request(method.clone(), &expanded_url);
 
-    // Apply request headers (user-set headers take precedence over auth headers)
-    if !auth_headers.is_empty() {
-        for (key, value) in &auth_headers {
-            req_builder = req_builder.header(key, value);
-        }
+    // Collect all headers for curl debug
+    let mut all_headers: Vec<(String, String)> = Vec::new();
+
+    // Apply auth headers
+    for (key, value) in &auth_headers {
+        req_builder = req_builder.header(key, value);
+        all_headers.push((key.clone(), value.clone()));
     }
 
-    if let Some(headers) = request.headers {
+    // Apply user headers
+    if let Some(headers) = &request.headers {
         for (key, value) in headers {
-            let expanded_value = interpolate(&value, &vars);
-            req_builder = req_builder.header(&key, &expanded_value);
+            let expanded_value = interpolate(value, &vars);
+            req_builder = req_builder.header(key, &expanded_value);
+            all_headers.push((key.clone(), expanded_value));
         }
     }
 
-    // Merge auth query params then request query params (request takes precedence)
+    // Apply query params
     let mut all_query_params: HashMap<String, String> = auth_query_params;
-    if let Some(params) = request.query_params {
+    if let Some(params) = &request.query_params {
         for (k, v) in params {
-            all_query_params.insert(k, interpolate(&v, &vars));
+            let expanded = interpolate(v, &vars);
+            all_query_params.insert(k.clone(), expanded);
         }
     }
     if !all_query_params.is_empty() {
         req_builder = req_builder.query(&all_query_params);
     }
 
-    if let Some(body) = request.body {
-        let expanded_body = interpolate(&body, &vars);
+    // Apply body
+    let body_str = request.body.as_deref();
+    if let Some(body) = body_str {
+        let expanded_body = interpolate(body, &vars);
         req_builder = req_builder.body(expanded_body);
     }
 
-    let response = req_builder.send().await.map_err(|err| {
-        if err.is_timeout() {
-            AppError::Timeout(timeout_ms)
-        } else {
-            AppError::from(err)
-        }
-    })?;
+    // Build curl debug command
+    let debug_curl = build_curl_command(
+        &method.to_string(),
+        &expanded_url,
+        &all_headers,
+        body_str,
+    );
 
+    // Send
+    let response = req_builder.send().await.map_err(AppError::from)?;
     let status = response.status().as_u16();
-    let status_text = response
-        .status()
-        .canonical_reason()
-        .unwrap_or("")
-        .to_string();
+    let status_text = response.status().canonical_reason().unwrap_or("").to_string();
 
-    let mut headers = HashMap::new();
-    let mut content_type = String::new();
+    let mut resp_headers = HashMap::new();
     for (key, value) in response.headers() {
         if let Ok(v) = value.to_str() {
-            if key.as_str().eq_ignore_ascii_case("content-type") {
-                content_type = v.to_string();
-            }
-            headers.insert(key.to_string(), v.to_string());
+            resp_headers.insert(key.to_string(), v.to_string());
         }
     }
 
-    let body_bytes = response.bytes().await.map_err(AppError::from)?;
-    let body_size_bytes = body_bytes.len() as u64;
-    let body = String::from_utf8_lossy(&body_bytes).into_owned();
+    let body = response.text().await.map_err(AppError::from)?;
+    let body_size_bytes = body.len() as u64;
+    let is_json = serde_json::from_str::<serde_json::Value>(&body).is_ok();
     let response_time_ms = start.elapsed().as_millis() as u64;
-
-    let body_looks_like_json = body.trim_start().starts_with('{') || body.trim_start().starts_with('[');
-    let is_json = content_type.contains("application/json")
-        || content_type.contains("application/ld+json")
-        || (content_type.is_empty() && body_looks_like_json);
 
     Ok(RestResponse {
         status,
         status_text,
-        headers,
+        headers: resp_headers,
         body,
         response_time_ms,
         body_size_bytes,
         is_json,
+        debug_curl: Some(debug_curl),
     })
 }
