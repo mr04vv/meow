@@ -315,15 +315,14 @@ export function CollectionView() {
                                   ••••••••
                                 </span>
                               ) : (
-                                <Input
-                                  value={v?.value ?? ""}
-                                  onChange={async (e) => {
-                                    if (activeCollectionId) {
-                                      await upsertVariableValue(vk.id, activeEnvironmentId, e.target.value);
+                                <VariableValueInput
+                                  initialValue={v?.value ?? ""}
+                                  onSave={async (newValue) => {
+                                    if (activeCollectionId && activeEnvironmentId) {
+                                      await upsertVariableValue(vk.id, activeEnvironmentId, newValue);
                                       await loadVariables(activeCollectionId, activeEnvironmentId);
                                     }
                                   }}
-                                  className="h-6 text-xs font-mono border-transparent bg-transparent focus:border-border focus:bg-background px-1"
                                 />
                               )}
                             </td>
@@ -574,5 +573,36 @@ export function CollectionView() {
         )}
       </div>
     </ScrollArea>
+  );
+}
+
+function VariableValueInput({
+  initialValue,
+  onSave,
+}: {
+  initialValue: string;
+  onSave: (value: string) => void;
+}) {
+  const [value, setValue] = useState(initialValue);
+
+  useEffect(() => {
+    setValue(initialValue);
+  }, [initialValue]);
+
+  return (
+    <Input
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={() => {
+        if (value !== initialValue) onSave(value);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          if (value !== initialValue) onSave(value);
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+      className="h-6 text-xs font-mono border-transparent bg-transparent focus:border-border focus:bg-background px-1"
+    />
   );
 }

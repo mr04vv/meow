@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PlusIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -140,16 +140,15 @@ export function EnvironmentManagerDialog({
                                     <span className="font-mono text-foreground">{vk.key}</span>
                                   </td>
                                   <td className="px-3 py-1">
-                                    <Input
-                                      value={v?.value ?? ""}
-                                      onChange={async (e) => {
-                                        await upsertVariableValue(vk.id, env.id, e.target.value);
+                                    <EnvVarInput
+                                      initialValue={v?.value ?? ""}
+                                      isSecret={vk.is_secret}
+                                      onSave={async (newValue) => {
+                                        await upsertVariableValue(vk.id, env.id, newValue);
                                         if (collectionId) {
                                           await loadVariables(collectionId, env.id);
                                         }
                                       }}
-                                      type={vk.is_secret ? "password" : "text"}
-                                      className="h-6 text-xs font-mono border-transparent bg-transparent focus:border-border focus:bg-background px-1"
                                     />
                                   </td>
                                   <td className="px-3 py-1 text-center">
@@ -229,5 +228,39 @@ export function EnvironmentManagerDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function EnvVarInput({
+  initialValue,
+  isSecret,
+  onSave,
+}: {
+  initialValue: string;
+  isSecret: boolean;
+  onSave: (value: string) => void;
+}) {
+  const [value, setValue] = useState(initialValue);
+
+  useEffect(() => {
+    setValue(initialValue);
+  }, [initialValue]);
+
+  return (
+    <Input
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={() => {
+        if (value !== initialValue) onSave(value);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          if (value !== initialValue) onSave(value);
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+      type={isSecret ? "password" : "text"}
+      className="h-6 text-xs font-mono border-transparent bg-transparent focus:border-border focus:bg-background px-1"
+    />
   );
 }
