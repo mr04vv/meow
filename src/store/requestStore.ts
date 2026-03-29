@@ -49,7 +49,6 @@ export interface ResponseData {
   responseTimeMs: number;
   bodySizeBytes: number;
   isJson: boolean;
-  debugCurl?: string;
 }
 
 interface RequestState {

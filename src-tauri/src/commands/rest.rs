@@ -30,7 +30,6 @@ pub struct RestResponse {
     pub response_time_ms: u64,
     pub body_size_bytes: u64,
     pub is_json: bool,
-    pub debug_curl: Option<String>,
 }
 
 fn build_variable_map(
@@ -311,13 +310,9 @@ pub async fn send_rest_request(
         req_builder = req_builder.body(expanded_body);
     }
 
-    // Build curl debug command
-    let debug_curl = build_curl_command(
-        &method.to_string(),
-        &expanded_url,
-        &all_headers,
-        body_str,
-    );
+    // Debug: log curl command
+    let debug_curl = build_curl_command(&method.to_string(), &expanded_url, &all_headers, body_str);
+    log::info!("[send_rest_request] {}", debug_curl);
 
     // Send
     let response = req_builder.send().await.map_err(AppError::from)?;
@@ -344,6 +339,5 @@ pub async fn send_rest_request(
         response_time_ms,
         body_size_bytes,
         is_json,
-        debug_curl: Some(debug_curl),
     })
 }
