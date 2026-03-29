@@ -72,26 +72,42 @@ fn resolve_auth_headers(
         return Ok((HashMap::new(), HashMap::new()));
     }
 
-    // No request-level auth — try to inherit from collection
-    let Some(collection_id) = &request.collection_id else {
+    // No request-level auth — try to inherit from collection (walk up parent chain)
+    let Some(start_collection_id) = &request.collection_id else {
         return Ok((HashMap::new(), HashMap::new()));
     };
 
-    // Query collection auth settings
-    let collection_row = conn.query_row(
-        "SELECT auth_type, auth_config FROM collections WHERE id = ?1",
-        rusqlite::params![collection_id],
-        |row| {
-            Ok((
-                row.get::<_, Option<String>>(0)?,
-                row.get::<_, Option<String>>(1)?,
-            ))
-        },
-    );
+    // Walk up parent_id chain to find the collection with auth settings
+    let mut current_id = start_collection_id.clone();
+    let mut col_auth_type: Option<String> = None;
+    let mut col_auth_config: Option<String> = None;
+    let mut auth_collection_id = start_collection_id.clone();
 
-    let Ok((col_auth_type, col_auth_config)) = collection_row else {
-        return Ok((HashMap::new(), HashMap::new()));
-    };
+    for _ in 0..10 {
+        let row = conn.query_row(
+            "SELECT auth_type, auth_config, parent_id FROM collections WHERE id = ?1",
+            rusqlite::params![current_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        );
+
+        let Ok((at, ac, parent_id)) = row else { break };
+
+        if at.is_some() && at.as_deref() != Some("none") {
+            col_auth_type = at;
+            col_auth_config = ac;
+            auth_collection_id = current_id;
+            break;
+        }
+
+        let Some(pid) = parent_id else { break };
+        current_id = pid;
+    }
 
     let Some(auth_type) = col_auth_type else {
         return Ok((HashMap::new(), HashMap::new()));
@@ -115,10 +131,10 @@ fn resolve_auth_headers(
     };
 
     if auth_type == "cognito" {
-        // Fetch stored Cognito id_token and apply as Bearer
+        // Fetch stored Cognito id_token and apply as Bearer (using the collection that has auth)
         let token_row = conn.query_row(
             "SELECT id_token FROM cognito_tokens WHERE collection_id = ?1",
-            rusqlite::params![collection_id],
+            rusqlite::params![auth_collection_id],
             |row| row.get::<_, String>(0),
         );
 
