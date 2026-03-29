@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   EyeIcon,
   EyeOffIcon,
@@ -68,20 +69,25 @@ export function CollectionView() {
     }
   }, [activeCollectionId, loadEnvironments]);
 
-  // Initialize auth state from collection record
+  // Load auth state from collection (using get_collection_auth which decrypts)
   useEffect(() => {
-    if (!collection) return;
-    if (collection.auth_type && collection.auth_config) {
+    if (!activeCollectionId) return;
+    (async () => {
       try {
-        const parsed = JSON.parse(collection.auth_config) as Omit<AuthConfig, "type">;
-        setAuth({ type: collection.auth_type as AuthConfig["type"], ...parsed });
+        const authData = (await invoke("get_collection_auth", {
+          collectionId: activeCollectionId,
+        })) as { auth_type: string | null; auth_config: string | null };
+        if (authData.auth_type && authData.auth_config) {
+          const parsed = JSON.parse(authData.auth_config) as Omit<AuthConfig, "type">;
+          setAuth({ type: authData.auth_type as AuthConfig["type"], ...parsed });
+        } else {
+          setAuth({ type: (authData.auth_type as AuthConfig["type"]) ?? "none" });
+        }
       } catch {
-        setAuth({ type: (collection.auth_type as AuthConfig["type"]) ?? "none" });
+        setAuth({ type: "none" });
       }
-    } else {
-      setAuth({ type: (collection.auth_type as AuthConfig["type"]) ?? "none" });
-    }
-  }, [collection?.id, collection?.auth_type, collection?.auth_config]);
+    })();
+  }, [activeCollectionId]);
 
   // Load requests for child collections to show endpoint counts
   useEffect(() => {
@@ -102,6 +108,16 @@ export function CollectionView() {
         type === "none" ? null : type,
         type === "none" ? null : JSON.stringify(rest)
       );
+      // Reload auth to get the decrypted version back
+      const authData = (await invoke("get_collection_auth", {
+        collectionId: activeCollectionId,
+      })) as { auth_type: string | null; auth_config: string | null };
+      if (authData.auth_type && authData.auth_config) {
+        try {
+          const parsed = JSON.parse(authData.auth_config) as Omit<AuthConfig, "type">;
+          setAuth({ type: authData.auth_type as AuthConfig["type"], ...parsed });
+        } catch { /* keep current */ }
+      }
       toast.success("Authentication settings saved.");
     } catch (e) {
       toast.error(`Failed to save auth: ${String(e)}`);
