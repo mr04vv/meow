@@ -380,6 +380,7 @@ function HomePage() {
           try {
             const workspace = await useWorkspaceStore.getState().createWorkspace(collectionName);
             const rootCollection = await createCollection(collectionName, workspace.id);
+            const serverUrls = new Map<string, string>();
 
             for (const file of files) {
               try {
@@ -395,10 +396,45 @@ function HomePage() {
                   filename: file.path,
                 })) as ParsedOpenApi;
 
-                const baseUrl = spec.servers[0]?.url;
-                await generateFromOpenApi(spec, baseUrl, rootCollection.id, undefined, workspace.id);
+                // Collect server URLs for env setup later
+                const serverUrl = spec.servers[0]?.url;
+                if (serverUrl && !serverUrls.has(serverUrl)) {
+                  serverUrls.set(serverUrl, file.path);
+                }
+                // Use {{BASE_URL}} as placeholder — resolved via environment variables
+                await generateFromOpenApi(spec, "{{BASE_URL}}", rootCollection.id, undefined, workspace.id);
               } catch (e) {
                 toast.error(`Failed to process ${file.path}: ${String(e)}`);
+              }
+            }
+
+            // Create "local" environment with BASE_URL from OpenAPI servers
+            const firstServerUrl = serverUrls.keys().next().value;
+            if (firstServerUrl) {
+              try {
+                await invoke("create_collection_environment", {
+                  collectionId: rootCollection.id,
+                  name: "local",
+                });
+                // Reload environments to get the new one's ID
+                const envs = (await invoke("list_collection_environments", {
+                  collectionId: rootCollection.id,
+                })) as Array<{ id: string; name: string }>;
+                const localEnv = envs.find((e) => e.name === "local");
+                if (localEnv) {
+                  await invoke("upsert_collection_variable", {
+                    environmentId: localEnv.id,
+                    key: "BASE_URL",
+                    value: firstServerUrl,
+                    isSecret: false,
+                  });
+                  await invoke("set_active_collection_environment", {
+                    collectionId: rootCollection.id,
+                    environmentId: localEnv.id,
+                  });
+                }
+              } catch {
+                // Non-critical — env setup failure shouldn't block import
               }
             }
 

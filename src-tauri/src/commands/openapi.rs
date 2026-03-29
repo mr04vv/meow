@@ -208,11 +208,27 @@ fn parse_paths(doc: &Value, _version: &str) -> Vec<PathInfo> {
         return vec![];
     };
 
-    // Build schemas map for $ref resolution (support both OAS3 and Swagger 2)
-    let schemas: serde_json::Map<String, Value> = {
-        let oas3 = doc["components"]["schemas"].as_object();
-        let oas2 = doc["definitions"].as_object();
-        oas3.or(oas2).cloned().unwrap_or_default()
+    // Build a combined components map for $ref resolution
+    // Includes schemas, responses, parameters, requestBodies (OAS3) and definitions (Swagger 2)
+    let components: serde_json::Map<String, Value> = {
+        let mut map = serde_json::Map::new();
+        // OAS3: flatten components/* into a single map
+        if let Some(components_obj) = doc["components"].as_object() {
+            for (_section_name, section_value) in components_obj {
+                if let Some(section_map) = section_value.as_object() {
+                    for (k, v) in section_map {
+                        map.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+        // Swagger 2: definitions
+        if let Some(defs) = doc["definitions"].as_object() {
+            for (k, v) in defs {
+                map.insert(k.clone(), v.clone());
+            }
+        }
+        map
     };
 
     const HTTP_METHODS: &[&str] = &["get", "post", "put", "patch", "delete", "head", "options", "trace"];
@@ -233,7 +249,7 @@ fn parse_paths(doc: &Value, _version: &str) -> Vec<PathInfo> {
                         .as_array()
                         .map(|arr| {
                             arr.iter()
-                                .map(|p| resolve_refs(p, &schemas))
+                                .map(|p| resolve_refs(p, &components))
                                 .collect()
                         })
                         .unwrap_or_default();
@@ -242,7 +258,7 @@ fn parse_paths(doc: &Value, _version: &str) -> Vec<PathInfo> {
                     let request_body = if op["requestBody"].is_null() {
                         None
                     } else {
-                        Some(resolve_refs(&op["requestBody"], &schemas))
+                        Some(resolve_refs(&op["requestBody"], &components))
                     };
 
                     // Resolve $ref in responses
@@ -250,7 +266,7 @@ fn parse_paths(doc: &Value, _version: &str) -> Vec<PathInfo> {
                         .as_object()
                         .map(|o| {
                             o.iter()
-                                .map(|(k, v)| (k.clone(), resolve_refs(v, &schemas)))
+                                .map(|(k, v)| (k.clone(), resolve_refs(v, &components)))
                                 .collect()
                         })
                         .unwrap_or_default();
@@ -290,11 +306,11 @@ fn parse_paths(doc: &Value, _version: &str) -> Vec<PathInfo> {
 /// Recursively walk a JSON value and replace any `{"$ref": "#/components/schemas/Foo"}`
 /// (or `#/definitions/Foo`) with the actual schema from the components map.
 /// Also handles `allOf` by merging all sub-schemas' properties into a single object schema.
-fn resolve_refs(value: &Value, schemas: &serde_json::Map<String, Value>) -> Value {
-    resolve_refs_inner(value, schemas, 0)
+fn resolve_refs(value: &Value, components: &serde_json::Map<String, Value>) -> Value {
+    resolve_refs_inner(value, components, 0)
 }
 
-fn resolve_refs_inner(value: &Value, schemas: &serde_json::Map<String, Value>, depth: u8) -> Value {
+fn resolve_refs_inner(value: &Value, components: &serde_json::Map<String, Value>, depth: u8) -> Value {
     if depth > 8 {
         // Guard against circular references
         return value.clone();
@@ -310,8 +326,8 @@ fn resolve_refs_inner(value: &Value, schemas: &serde_json::Map<String, Value>, d
                     .split('/')
                     .last()
                     .unwrap_or("");
-                if let Some(resolved) = schemas.get(schema_name) {
-                    return resolve_refs_inner(resolved, schemas, depth + 1);
+                if let Some(resolved) = components.get(schema_name) {
+                    return resolve_refs_inner(resolved, components, depth + 1);
                 }
                 // Unknown $ref — return as-is
                 return value.clone();
@@ -322,7 +338,7 @@ fn resolve_refs_inner(value: &Value, schemas: &serde_json::Map<String, Value>, d
                 let mut merged_props = serde_json::Map::new();
                 let mut required: Vec<Value> = Vec::new();
                 for sub in all_of {
-                    let resolved_sub = resolve_refs_inner(sub, schemas, depth + 1);
+                    let resolved_sub = resolve_refs_inner(sub, components, depth + 1);
                     if let Some(props) = resolved_sub["properties"].as_object() {
                         for (k, v) in props {
                             merged_props.insert(k.clone(), v.clone());
@@ -346,7 +362,7 @@ fn resolve_refs_inner(value: &Value, schemas: &serde_json::Map<String, Value>, d
                 if let Some(variants) = map.get(*key).and_then(|v| v.as_array()) {
                     let resolved_variants: Vec<Value> = variants
                         .iter()
-                        .map(|v| resolve_refs_inner(v, schemas, depth + 1))
+                        .map(|v| resolve_refs_inner(v, components, depth + 1))
                         .collect();
                     let mut result = serde_json::Map::new();
                     result.insert(key.to_string(), Value::Array(resolved_variants));
@@ -357,12 +373,12 @@ fn resolve_refs_inner(value: &Value, schemas: &serde_json::Map<String, Value>, d
             // Recursively resolve all fields
             let resolved_map: serde_json::Map<String, Value> = map
                 .iter()
-                .map(|(k, v)| (k.clone(), resolve_refs_inner(v, schemas, depth + 1)))
+                .map(|(k, v)| (k.clone(), resolve_refs_inner(v, components, depth + 1)))
                 .collect();
             Value::Object(resolved_map)
         }
         Value::Array(arr) => {
-            Value::Array(arr.iter().map(|v| resolve_refs_inner(v, schemas, depth + 1)).collect())
+            Value::Array(arr.iter().map(|v| resolve_refs_inner(v, components, depth + 1)).collect())
         }
         // Primitives pass through unchanged
         other => other.clone(),

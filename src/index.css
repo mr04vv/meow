@@ -77,6 +77,26 @@ body {
   outline-color: var(--ring);
 }
 
+.cm-var-defined {
+  background-color: rgba(16, 185, 129, 0.2);
+  color: rgb(52, 211, 153);
+  border-radius: 2px;
+}
+
+.cm-var-undefined {
+  background-color: rgba(249, 115, 22, 0.2);
+  color: rgb(251, 146, 60);
+  border-radius: 2px;
+}
+
+.cm-var-tooltip {
+  padding: 4px 8px;
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  color: hsl(var(--foreground));
+}
+
 body {
   background-color: var(--background);
   color: var(--foreground);

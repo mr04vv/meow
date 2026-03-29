@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Loader2Icon, SaveIcon, SendHorizonalIcon } from "lucide-react";
+import CodeMirror, { EditorView } from "@uiw/react-codemirror";
+import { json } from "@codemirror/lang-json";
 import { AuthEditor } from "@/components/AuthEditor";
+import { CodeMirrorUrlBar } from "@/components/CodeMirrorUrlBar";
 import { KeyValueEditor } from "@/components/KeyValueEditor";
-import { VariableHighlight } from "@/components/VariableHighlight";
 import { VariableSummaryBar } from "@/components/VariableSummaryBar";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,10 +16,36 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 import { useCollectionStore } from "@/store/collectionStore";
 import type { AuthConfig, HttpMethod, RequestTab, ResponseData } from "@/store/requestStore";
 import { useRequestStore } from "@/store/requestStore";
+
+const bodyEditorTheme = EditorView.theme({
+  "&": {
+    backgroundColor: "transparent",
+    color: "hsl(var(--foreground))",
+    fontSize: "13px",
+    height: "100%",
+  },
+  ".cm-gutters": {
+    backgroundColor: "transparent",
+    border: "none",
+    color: "hsl(var(--muted-foreground))",
+  },
+  ".cm-activeLine": {
+    backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  ".cm-cursor": {
+    borderLeftColor: "hsl(var(--foreground))",
+  },
+  ".cm-scroller": {
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    overflow: "auto",
+  },
+  "&.cm-focused": {
+    outline: "none",
+  },
+}, { dark: true });
 
 const METHOD_COLORS: Record<HttpMethod, string> = {
   GET: "text-emerald-500",
@@ -35,16 +63,6 @@ export function RequestEditor({ tab }: Props) {
   const { updateTab, setResponse, setLoading, loading, pinTab, saveTab } = useRequestStore();
   const { collections, variables } = useCollectionStore();
   const isLoading = loading[tab.id] ?? false;
-  const urlInputRef = useRef<HTMLInputElement>(null);
-  const urlOverlayRef = useRef<HTMLDivElement>(null);
-
-  const syncScroll = useCallback(() => {
-    if (urlInputRef.current && urlOverlayRef.current) {
-      urlOverlayRef.current.scrollLeft = urlInputRef.current.scrollLeft;
-    }
-  }, []);
-
-  const hasVariables = tab.url.includes("{{");
 
   // Build variable map for highlighting
   const variableMap = useMemo(() => {
@@ -203,29 +221,14 @@ export function RequestEditor({ tab }: Props) {
             </SelectContent>
           </Select>
 
-          <div className="flex-1 relative h-full overflow-hidden">
-            <input
-              ref={urlInputRef}
-              placeholder="https://api.example.com/endpoint"
+          <div className="flex-1 h-full overflow-hidden">
+            <CodeMirrorUrlBar
               value={tab.url}
-              onChange={(e) => update({ url: e.target.value })}
-              onScroll={syncScroll}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) handleSend();
-              }}
-              onKeyUp={syncScroll}
-              onClick={syncScroll}
-              className="absolute inset-0 font-mono text-sm px-3 bg-transparent outline-none"
-              style={hasVariables ? { color: "transparent", caretColor: "#e5e5e5" } : undefined}
+              onChange={(value) => update({ url: value })}
+              onSend={handleSend}
+              variables={variableMap}
+              placeholder="https://api.example.com/endpoint"
             />
-            {hasVariables && (
-              <div
-                ref={urlOverlayRef}
-                className="absolute inset-0 font-mono text-sm px-3 flex items-center pointer-events-none overflow-hidden whitespace-nowrap"
-              >
-                <VariableHighlight text={tab.url} variables={variableMap} />
-              </div>
-            )}
           </div>
         </div>
 
@@ -341,12 +344,20 @@ export function RequestEditor({ tab }: Props) {
               />
             </TabsContent>
 
-            <TabsContent value="body" className="p-3 m-0 h-full">
-              <Textarea
-                placeholder='{"key": "value"}'
+            <TabsContent value="body" className="m-0 h-full flex flex-col">
+              <CodeMirror
                 value={tab.body}
-                onChange={(e) => update({ body: e.target.value })}
-                className="font-mono text-xs min-h-32 resize-none"
+                onChange={(value) => update({ body: value })}
+                extensions={[json(), bodyEditorTheme]}
+                height="100%"
+                className="flex-1 h-full text-sm"
+                basicSetup={{
+                  lineNumbers: true,
+                  bracketMatching: true,
+                  autocompletion: false,
+                  foldGutter: true,
+                  highlightActiveLine: true,
+                }}
               />
             </TabsContent>
 
