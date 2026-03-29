@@ -288,9 +288,18 @@ pub async fn update_collection_auth(
 ) -> Result<(), AppError> {
     let conn = state.0.lock().map_err(|_| AppError::Custom("DB lock poisoned".into()))?;
     let now = epoch_now();
+
+    // Encrypt auth_config if present
+    let encrypted_config = if let Some(ref config) = auth_config {
+        let key = crate::storage::database::get_encryption_key(&conn)?;
+        Some(crate::crypto::encrypt(config, &key)?)
+    } else {
+        None
+    };
+
     conn.execute(
         "UPDATE collections SET auth_type = ?1, auth_config = ?2, updated_at = ?3 WHERE id = ?4",
-        rusqlite::params![auth_type, auth_config, now, collection_id],
+        rusqlite::params![auth_type, encrypted_config, now, collection_id],
     )?;
     Ok(())
 }
@@ -311,7 +320,22 @@ pub async fn get_collection_auth(
             })
         },
     ).map_err(|_| AppError::Custom("Collection not found".into()))?;
-    Ok(auth)
+
+    // Decrypt auth_config if present
+    let decrypted = if let Some(ref encrypted) = auth.auth_config {
+        let key = crate::storage::database::get_encryption_key(&conn)?;
+        match crate::crypto::decrypt(encrypted, &key) {
+            Ok(plaintext) => Some(plaintext),
+            Err(_) => auth.auth_config.clone(), // Fallback: maybe it's not encrypted (legacy data)
+        }
+    } else {
+        None
+    };
+
+    Ok(CollectionAuth {
+        auth_type: auth.auth_type,
+        auth_config: decrypted,
+    })
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

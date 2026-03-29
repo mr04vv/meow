@@ -1,5 +1,6 @@
 mod auth;
 mod commands;
+pub mod crypto;
 mod error;
 mod storage;
 

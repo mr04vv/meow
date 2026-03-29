@@ -99,6 +99,11 @@ CREATE TABLE IF NOT EXISTS github_auth (
     avatar_url TEXT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS app_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 "#;
 
 pub fn init_database(app: &AppHandle) -> AppResult<Connection> {
@@ -114,7 +119,35 @@ pub fn init_database(app: &AppHandle) -> AppResult<Connection> {
 
     conn.execute_batch(MIGRATIONS)?;
 
+    // Initialize encryption key if not exists
+    let has_key: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM app_config WHERE key = 'encryption_key'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count > 0)
+        .unwrap_or(false);
+
+    if !has_key {
+        let key = crate::crypto::generate_key();
+        conn.execute(
+            "INSERT INTO app_config (key, value) VALUES ('encryption_key', ?1)",
+            rusqlite::params![key],
+        )?;
+    }
+
     log::info!("Database initialized at: {:?}", db_path);
 
     Ok(conn)
+}
+
+/// Get the encryption key from the database
+pub fn get_encryption_key(conn: &Connection) -> AppResult<String> {
+    conn.query_row(
+        "SELECT value FROM app_config WHERE key = 'encryption_key'",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(|e| crate::error::AppError::Custom(format!("Encryption key not found: {}", e)))
 }

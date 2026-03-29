@@ -101,9 +101,16 @@ fn resolve_auth_headers(
         return Ok((HashMap::new(), HashMap::new()));
     }
 
-    // Expand variables in auth_config using the collection's active environment variables
+    // Decrypt and expand variables in auth_config
     let auth_config_str = match col_auth_config {
-        Some(cfg) => interpolate(&cfg, vars),
+        Some(cfg) => {
+            // Try to decrypt (may be encrypted or legacy plaintext)
+            let decrypted = match crate::storage::database::get_encryption_key(conn) {
+                Ok(key) => crate::crypto::decrypt(&cfg, &key).unwrap_or(cfg),
+                Err(_) => cfg,
+            };
+            interpolate(&decrypted, vars)
+        }
         None => return Ok((HashMap::new(), HashMap::new())),
     };
 
