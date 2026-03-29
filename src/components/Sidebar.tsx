@@ -40,6 +40,8 @@ export function Sidebar() {
     loadRequests,
     deleteCollection,
     setActiveCollection,
+    activeCollectionId,
+    loadEnvironments,
     createCollection,
   } = useCollectionStore();
   const {
@@ -105,6 +107,16 @@ export function Sidebar() {
   // Single click: open as preview tab
   const openRequestPreview = (req: SavedRequest) => {
     openPreviewTab(buildRequestTabData(req));
+    // Ensure environment is loaded for the request's collection (or parent)
+    if (req.collection_id) {
+      const col = collections.find((c) => c.id === req.collection_id);
+      const rootId = col?.parent_id
+        ? (collections.find((c) => c.id === col.parent_id && c.parent_id === null)?.id ?? col.parent_id)
+        : req.collection_id;
+      if (rootId !== activeCollectionId) {
+        loadEnvironments(rootId);
+      }
+    }
   };
 
   // Double click: open as pinned tab

@@ -164,9 +164,9 @@ export function RequestEditor({ tab, hideUrlBar }: Props) {
           method: tab.method,
           url: tab.url,
           headers: Object.keys(headers).length > 0 ? headers : null,
-          query_params: Object.keys(queryParams).length > 0 ? queryParams : null,
+          queryParams: Object.keys(queryParams).length > 0 ? queryParams : null,
           body: tab.body || null,
-          collection_id: tab.collectionId ?? null,
+          collectionId: tab.collectionId ?? null,
         },
       })) as ResponseData;
 
