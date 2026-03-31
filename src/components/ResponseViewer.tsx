@@ -1,4 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import CodeMirror from "@uiw/react-codemirror";
+import { json } from "@codemirror/lang-json";
+import { EditorView } from "@codemirror/view";
 import { AlertTriangleIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -44,13 +47,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function prettyJson(text: string): string {
-  try {
-    return JSON.stringify(JSON.parse(text), null, 2);
-  } catch {
-    return text;
-  }
-}
+
 
 export function ResponseViewer({ response, loading, docsJson, tab }: Props) {
   const { loadDocs, docs } = useRequestStore();
@@ -181,19 +178,17 @@ export function ResponseViewer({ response, loading, docsJson, tab }: Props) {
                 </div>
 
                 <TabsContent value="body" className="flex-1 overflow-hidden m-0">
-                  <ScrollArea className="h-full">
-                    {response.status === 0 ? (
+                  {response.status === 0 ? (
+                    <ScrollArea className="h-full">
                       <div className="p-4">
                         <p className="text-[13px] text-destructive font-mono whitespace-pre-wrap break-all leading-relaxed">
                           {response.body}
                         </p>
                       </div>
-                    ) : (
-                      <pre className="p-4 text-[13px] font-mono whitespace-pre-wrap break-all leading-relaxed">
-                        {response.isJson ? prettyJson(response.body) : response.body}
-                      </pre>
-                    )}
-                  </ScrollArea>
+                    </ScrollArea>
+                  ) : (
+                    <ResponseBodyViewer body={response.body} isJson={response.isJson} />
+                  )}
                 </TabsContent>
 
                 <TabsContent value="headers" className="flex-1 overflow-hidden m-0">
@@ -223,5 +218,80 @@ export function ResponseViewer({ response, loading, docsJson, tab }: Props) {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+const responseBodyTheme = EditorView.theme({
+  "&": {
+    backgroundColor: "transparent",
+    color: "#e5e5e5",
+    fontSize: "13px",
+  },
+  ".cm-gutters": {
+    backgroundColor: "transparent",
+    border: "none",
+    color: "#525252",
+  },
+  ".cm-activeLineGutter": {
+    backgroundColor: "transparent",
+  },
+  ".cm-activeLine": {
+    backgroundColor: "transparent",
+  },
+  ".cm-cursor": {
+    display: "none",
+  },
+  ".cm-scroller": {
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+  },
+  "&.cm-focused": {
+    outline: "none",
+  },
+  ".cm-selectionBackground": {
+    backgroundColor: "rgba(255,255,255,0.1) !important",
+  },
+  "&.cm-focused .cm-selectionBackground": {
+    backgroundColor: "rgba(255,255,255,0.15) !important",
+  },
+}, { dark: true });
+
+function ResponseBodyViewer({ body, isJson }: { body: string; isJson: boolean }) {
+  const displayValue = useMemo(() => {
+    if (isJson) {
+      try {
+        return JSON.stringify(JSON.parse(body), null, 2);
+      } catch {
+        return body;
+      }
+    }
+    return body;
+  }, [body, isJson]);
+
+  const extensions = useMemo(() => {
+    const exts = [
+      responseBodyTheme,
+      EditorView.editable.of(false),
+      EditorView.lineWrapping,
+    ];
+    if (isJson) {
+      exts.push(json());
+    }
+    return exts;
+  }, [isJson]);
+
+  return (
+    <CodeMirror
+      value={displayValue}
+      extensions={extensions}
+      theme="dark"
+      readOnly
+      basicSetup={{
+        lineNumbers: true,
+        foldGutter: true,
+        highlightActiveLine: false,
+        bracketMatching: true,
+      }}
+      className="h-full"
+    />
   );
 }
