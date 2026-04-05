@@ -5,3 +5,7 @@ MACOSX_DEPLOYMENT_TARGET = "14.0"
 [target.aarch64-apple-darwin]
 linker = "/usr/bin/cc"
 rustflags = ["-L", "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib"]
+
+[target.x86_64-unknown-linux-gnu]
+linker = "/usr/bin/cc"
+rustflags = ["-C", "link-arg=-B/usr/bin", "-C", "link-arg=-L/lib/x86_64-linux-gnu", "-C", "link-arg=-L/usr/lib/x86_64-linux-gnu"]
