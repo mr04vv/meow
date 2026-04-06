@@ -117,12 +117,26 @@ CREATE TABLE IF NOT EXISTS app_config (
 );
 "#,
     },
-    // Future migrations go here:
-    // Migration {
-    //     version: 2,
-    //     description: "Add some_new_column to collections",
-    //     sql: "ALTER TABLE collections ADD COLUMN some_new_column TEXT;",
-    // },
+    Migration {
+        version: 2,
+        description: "Add gRPC support",
+        sql: r#"
+ALTER TABLE requests ADD COLUMN request_type TEXT NOT NULL DEFAULT 'rest';
+
+CREATE TABLE IF NOT EXISTS request_grpc_meta (
+    request_id TEXT PRIMARY KEY,
+    service_name TEXT NOT NULL,
+    method_name TEXT NOT NULL,
+    proto_descriptor BLOB NOT NULL,
+    input_type_name TEXT NOT NULL,
+    output_type_name TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    spec_fingerprint TEXT NOT NULL,
+    user_edited INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (request_id) REFERENCES requests(id) ON DELETE CASCADE
+);
+"#,
+    },
 ];
 
 pub fn init_database(app: &AppHandle) -> AppResult<Connection> {

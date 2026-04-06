@@ -657,3 +657,225 @@ fn epoch_now() -> String {
         .as_secs()
         .to_string()
 }
+
+// ─── gRPC / Proto collection generation ─────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct GenerateProtoCollectionRequest {
+    pub parsed_proto: crate::commands::proto::ParsedProto,
+    pub workspace_id: Option<String>,
+    pub parent_collection_id: Option<String>,
+    pub collection_id: Option<String>,
+    pub collection_name: Option<String>,
+}
+
+#[tauri::command]
+pub async fn generate_collection_from_proto(
+    state: State<'_, DbState>,
+    request: GenerateProtoCollectionRequest,
+) -> Result<SyncResult, AppError> {
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Custom("DB lock poisoned".into()))?;
+    let now = epoch_now();
+    let proto = &request.parsed_proto;
+
+    let collection_name = request
+        .collection_name
+        .clone()
+        .unwrap_or_else(|| {
+            if proto.package.is_empty() {
+                "gRPC Services".to_string()
+            } else {
+                proto.package.clone()
+            }
+        });
+
+    log::info!(
+        "[generate_collection_from_proto] package='{}', services={}, descriptor_bytes={}",
+        proto.package,
+        proto.services.len(),
+        proto.descriptor_bytes.len()
+    );
+    for svc in &proto.services {
+        log::info!("[generate_collection_from_proto] service='{}', methods={}", svc.full_name, svc.methods.len());
+        for m in &svc.methods {
+            log::info!("[generate_collection_from_proto]   method='{}', streaming=({},{})", m.full_name, m.client_streaming, m.server_streaming);
+        }
+    }
+
+    // ── 1. Ensure root collection ───────────────────────────────────────────
+    let root_id = if let Some(existing_id) = &request.collection_id {
+        existing_id.clone()
+    } else if let Some(parent_id) = &request.parent_collection_id {
+        // Create subfolder under parent
+        let id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO collections (id, workspace_id, name, parent_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                id,
+                request.workspace_id,
+                collection_name,
+                parent_id,
+                now,
+                now
+            ],
+        )?;
+        id
+    } else {
+        // Create new root collection
+        let id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO collections (id, workspace_id, name, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![id, request.workspace_id, collection_name, now, now],
+        )?;
+        id
+    };
+
+    // ── 2. Load existing gRPC meta for this collection ──────────────────────
+    let mut existing_meta: HashMap<String, (String, String, bool)> = HashMap::new(); // operation_id -> (request_id, fingerprint, user_edited)
+    {
+        let mut stmt = conn.prepare(
+            "SELECT gm.operation_id, gm.request_id, gm.spec_fingerprint, gm.user_edited
+             FROM request_grpc_meta gm
+             JOIN requests r ON r.id = gm.request_id
+             WHERE r.collection_id = ?1",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![root_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i32>(3)? != 0,
+            ))
+        })?;
+        for row in rows {
+            let (op_id, req_id, fp, user_edited) = row?;
+            existing_meta.insert(op_id, (req_id, fp, user_edited));
+        }
+    }
+
+    let mut created = 0u32;
+    let mut updated = 0u32;
+    let mut skipped = 0u32;
+    let mut seen_operations = Vec::new();
+    let mut sort_order = 0i64;
+
+    // ── 3. Process each service/method ──────────────────────────────────────
+    for service in &proto.services {
+        for method in &service.methods {
+            // Skip streaming methods for MVP
+            if method.client_streaming || method.server_streaming {
+                continue;
+            }
+
+            let operation_id = method.full_name.clone(); // "package.Service/Method"
+            seen_operations.push(operation_id.clone());
+
+            // Compute fingerprint from method signature
+            let fingerprint = {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                let mut hasher = DefaultHasher::new();
+                method.full_name.hash(&mut hasher);
+                method.input_type.hash(&mut hasher);
+                method.output_type.hash(&mut hasher);
+                method.input_schema_json.hash(&mut hasher);
+                format!("{:x}", hasher.finish())
+            };
+
+            let request_name = format!("{}/{}", service.name, method.name);
+
+            if let Some((req_id, existing_fp, user_edited)) = existing_meta.get(&operation_id) {
+                if *user_edited {
+                    skipped += 1;
+                    continue;
+                }
+                if existing_fp == &fingerprint {
+                    skipped += 1;
+                    continue;
+                }
+                // Update existing request
+                conn.execute(
+                    "UPDATE requests SET name=?1, body=?2, updated_at=?3, sort_order=?4 WHERE id=?5",
+                    rusqlite::params![
+                        request_name,
+                        method.input_schema_json,
+                        now,
+                        sort_order,
+                        req_id
+                    ],
+                )?;
+                conn.execute(
+                    "UPDATE request_grpc_meta SET spec_fingerprint=?1, proto_descriptor=?2, input_type_name=?3, output_type_name=?4 WHERE request_id=?5",
+                    rusqlite::params![
+                        fingerprint,
+                        proto.descriptor_bytes,
+                        method.input_type,
+                        method.output_type,
+                        req_id
+                    ],
+                )?;
+                updated += 1;
+            } else {
+                // Create new request
+                let req_id = Uuid::new_v4().to_string();
+                conn.execute(
+                    "INSERT INTO requests (id, collection_id, name, method, url, headers, query_params, body, sort_order, created_at, updated_at, request_type)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    rusqlite::params![
+                        req_id,
+                        root_id,
+                        request_name,
+                        "GRPC",
+                        "{{GRPC_HOST}}",
+                        "{}",
+                        "{}",
+                        method.input_schema_json,
+                        sort_order,
+                        now,
+                        now,
+                        "grpc"
+                    ],
+                )?;
+                conn.execute(
+                    "INSERT INTO request_grpc_meta (request_id, service_name, method_name, proto_descriptor, input_type_name, output_type_name, operation_id, spec_fingerprint)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    rusqlite::params![
+                        req_id,
+                        service.full_name,
+                        method.name,
+                        proto.descriptor_bytes,
+                        method.input_type,
+                        method.output_type,
+                        operation_id,
+                        fingerprint
+                    ],
+                )?;
+                created += 1;
+            }
+            sort_order += 1;
+        }
+    }
+
+    // ── 4. Remove operations no longer in proto (unless user-edited) ────────
+    let mut removed = 0u32;
+    for (op_id, (req_id, _, user_edited)) in &existing_meta {
+        if !seen_operations.contains(op_id) && !user_edited {
+            conn.execute("DELETE FROM requests WHERE id = ?1", rusqlite::params![req_id])?;
+            removed += 1;
+        }
+    }
+
+    Ok(SyncResult {
+        root_collection_id: root_id,
+        tag_collections: vec![],
+        requests_created: created,
+        requests_updated: updated,
+        requests_skipped: skipped,
+        requests_removed: removed,
+    })
+}

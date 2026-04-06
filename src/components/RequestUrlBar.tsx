@@ -20,6 +20,7 @@ const METHOD_COLORS: Record<HttpMethod, string> = {
   PUT: "text-orange-500",
   PATCH: "text-purple-500",
   DELETE: "text-red-500",
+  GRPC: "text-teal-500",
 };
 
 interface Props {
@@ -113,18 +114,45 @@ export function RequestUrlBar({ tab }: Props) {
         queryParams[effectiveAuth.apiKeyName] = effectiveAuth.apiKeyValue ?? "";
       }
 
-      const response = (await invoke("send_rest_request", {
-        request: {
-          method: tab.method,
-          url: tab.url,
-          headers: Object.keys(headers).length > 0 ? headers : null,
-          queryParams: Object.keys(queryParams).length > 0 ? queryParams : null,
-          body: tab.body || null,
-          collectionId: tab.collectionId ?? null,
-        },
-      })) as ResponseData;
+      if (tab.requestType === "grpc") {
+        const grpcResponse = (await invoke("send_grpc_request", {
+          request: {
+            url: tab.url,
+            serviceName: tab.grpcService ?? "",
+            methodName: tab.grpcMethod ?? "",
+            metadata: Object.keys(headers).length > 0 ? headers : null,
+            body: tab.body || null,
+            requestId: tab.savedRequestId ?? null,
+            collectionId: tab.collectionId ?? null,
+          },
+        })) as { grpcStatus: number; grpcMessage: string; headers: Record<string, string>; trailers: Record<string, string>; body: string; responseTimeMs: number; bodySizeBytes: number; isJson: boolean };
 
-      setResponse(tab.id, response);
+        setResponse(tab.id, {
+          status: grpcResponse.grpcStatus === 0 ? 200 : 500,
+          statusText: grpcResponse.grpcMessage || (grpcResponse.grpcStatus === 0 ? "OK" : "Error"),
+          headers: grpcResponse.headers,
+          body: grpcResponse.body,
+          responseTimeMs: grpcResponse.responseTimeMs,
+          bodySizeBytes: grpcResponse.bodySizeBytes,
+          isJson: grpcResponse.isJson,
+          grpcStatus: grpcResponse.grpcStatus,
+          grpcMessage: grpcResponse.grpcMessage,
+          trailers: grpcResponse.trailers,
+        });
+      } else {
+        const response = (await invoke("send_rest_request", {
+          request: {
+            method: tab.method,
+            url: tab.url,
+            headers: Object.keys(headers).length > 0 ? headers : null,
+            queryParams: Object.keys(queryParams).length > 0 ? queryParams : null,
+            body: tab.body || null,
+            collectionId: tab.collectionId ?? null,
+          },
+        })) as ResponseData;
+
+        setResponse(tab.id, response);
+      }
     } catch (err) {
       setResponse(tab.id, {
         status: 0,
@@ -149,6 +177,16 @@ export function RequestUrlBar({ tab }: Props) {
       {/* URL bar — full width */}
       <div className="flex items-center gap-2 px-3 py-2 border-b">
         <div className="flex flex-1 items-center border rounded-lg overflow-hidden h-9">
+          {tab.requestType === "grpc" ? (
+            <div className="flex items-center gap-1.5 px-3 h-full border-r shrink-0">
+              <span className="font-mono text-sm font-bold text-teal-500">gRPC</span>
+              {tab.grpcService && tab.grpcMethod && (
+                <span className="text-[10px] text-muted-foreground font-mono truncate max-w-[120px]">
+                  {tab.grpcMethod}
+                </span>
+              )}
+            </div>
+          ) : (
           <Select
             value={tab.method}
             onValueChange={(v) => update({ method: v as HttpMethod })}
@@ -166,6 +204,7 @@ export function RequestUrlBar({ tab }: Props) {
               ))}
             </SelectContent>
           </Select>
+          )}
 
           <div className="flex-1 h-full overflow-hidden">
             <CodeMirrorUrlBar

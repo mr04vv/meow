@@ -2,7 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import { useCollectionStore } from "@/store/collectionStore";
 
-export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "GRPC";
+export type RequestType = "rest" | "grpc";
 
 export interface KeyValuePair {
   id: string;
@@ -39,6 +40,9 @@ export interface RequestTab {
   inheritAuth: boolean;
   isPreview: boolean;
   savedRequestId?: string;
+  requestType: RequestType;
+  grpcService?: string;
+  grpcMethod?: string;
 }
 
 export interface ResponseData {
@@ -49,6 +53,9 @@ export interface ResponseData {
   responseTimeMs: number;
   bodySizeBytes: number;
   isJson: boolean;
+  grpcStatus?: number;
+  grpcMessage?: string;
+  trailers?: Record<string, string>;
 }
 
 interface RequestState {
@@ -90,6 +97,7 @@ function newTab(): RequestTab {
     collectionId: null,
     inheritAuth: false,
     isPreview: false,
+    requestType: "rest",
   };
 }
 
@@ -234,7 +242,11 @@ export const useRequestStore = create<RequestState>((set, get) => {
 
     loadDocs: async (tabId, requestId) => {
       try {
-        const docs = await invoke("get_request_docs", { requestId }) as string | null;
+        // Try OpenAPI docs first, then gRPC docs
+        let docs = await invoke("get_request_docs", { requestId }) as string | null;
+        if (!docs) {
+          docs = await invoke("get_grpc_docs", { requestId }) as string | null;
+        }
         set((state) => ({
           docs: { ...state.docs, [tabId]: docs },
         }));

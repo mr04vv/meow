@@ -17,14 +17,18 @@ use commands::collection_env::{
     update_collection_auth, get_collection_auth,
 };
 use commands::request::{
-    create_request, delete_request, get_request, get_request_docs, list_requests, resolve_auth,
-    update_request,
+    create_request, delete_request, get_grpc_docs, get_request, get_request_docs, list_requests,
+    resolve_auth, update_request,
 };
 use commands::github::{
     github_auth_status, github_get_file_content, github_get_file_tree,
     github_list_branches, github_list_repos, github_logout, github_start_oauth,
 };
 use commands::openapi::{detect_openapi_files, parse_openapi};
+use commands::proto::parse_proto;
+use commands::grpc::send_grpc_request;
+use commands::collection::generate_collection_from_proto;
+use commands::request::get_request_grpc_meta;
 use commands::cognito::{cognito_authenticate, cognito_get_stored_token, cognito_refresh_token};
 use commands::rest::send_rest_request;
 use commands::workspace::{
@@ -109,6 +113,12 @@ pub fn run() {
             cognito_authenticate,
             cognito_refresh_token,
             cognito_get_stored_token,
+            // Proto / gRPC
+            parse_proto,
+            send_grpc_request,
+            generate_collection_from_proto,
+            get_request_grpc_meta,
+            get_grpc_docs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

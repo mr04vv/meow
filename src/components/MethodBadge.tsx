@@ -8,6 +8,7 @@ const METHOD_STYLES: Record<string, string> = {
   DELETE: "bg-red-600 text-white",
   HEAD: "bg-zinc-600 text-white",
   OPTIONS: "bg-zinc-600 text-white",
+  GRPC: "bg-teal-600 text-white",
 };
 
 interface Props {

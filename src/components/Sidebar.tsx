@@ -90,6 +90,11 @@ export function Sidebar() {
       value: v,
       enabled: true,
     }));
+    const isGrpc = req.request_type === "grpc";
+    const [grpcService, grpcMethod] = isGrpc && req.name.includes("/")
+      ? [req.name.split("/")[0], req.name.split("/").slice(1).join("/")]
+      : [undefined, undefined];
+
     return {
       name: req.name,
       method: req.method as HttpMethod,
@@ -101,6 +106,8 @@ export function Sidebar() {
       collectionId: req.collection_id,
       inheritAuth: req.collection_id !== null,
       savedRequestId: req.id,
+      requestType: (isGrpc ? "grpc" : "rest") as import("@/store/requestStore").RequestType,
+      ...(isGrpc ? { grpcService, grpcMethod } : {}),
     };
   };
 

@@ -2,8 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
 
-use crate::auth::AuthConfig;
-use crate::commands::collection_env::load_active_collection_variables_inner;
+use crate::commands::shared::{self, interpolate, build_variable_map};
 use crate::error::AppError;
 use crate::storage::DbState;
 
@@ -34,138 +33,8 @@ pub struct RestResponse {
     pub is_json: bool,
 }
 
-fn build_variable_map(
-    conn: &rusqlite::Connection,
-    collection_id: Option<&str>,
-) -> HashMap<String, String> {
-    let Some(cid) = collection_id else {
-        return HashMap::new();
-    };
-    load_active_collection_variables_inner(conn, cid)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|v| (v.key, v.value))
-        .collect()
-}
-
-/// Auth info resolved from DB (sync)
-struct ResolvedAuth {
-    headers: HashMap<String, String>,
-    query_params: HashMap<String, String>,
-    /// If Cognito, contains the credentials to authenticate
-    cognito_config: Option<CognitoCredentials>,
-}
-
-struct CognitoCredentials {
-    client_id: String,
-    username: String,
-    password: String,
-    region: String,
-}
-
-/// Resolve auth from DB (sync part — no network calls)
-fn resolve_auth_from_db(
-    conn: &rusqlite::Connection,
-    request: &RestRequest,
-    vars: &HashMap<String, String>,
-) -> Result<ResolvedAuth, AppError> {
-    // If the request has explicit auth, use it
-    if let Some(auth_type) = &request.auth_type {
-        if auth_type != "none" {
-            if let Some(auth_config_json) = &request.auth_config {
-                if let Ok(config) = serde_json::from_str::<AuthConfig>(auth_config_json) {
-                    let applied = config.apply();
-                    return Ok(ResolvedAuth {
-                        headers: applied.headers,
-                        query_params: applied.query_params,
-                        cognito_config: None,
-                    });
-                }
-            }
-        }
-        return Ok(ResolvedAuth { headers: HashMap::new(), query_params: HashMap::new(), cognito_config: None });
-    }
-
-    // Walk up parent chain to find collection with auth
-    let Some(start_id) = &request.collection_id else {
-        return Ok(ResolvedAuth { headers: HashMap::new(), query_params: HashMap::new(), cognito_config: None });
-    };
-
-    let mut current_id = start_id.clone();
-    let mut found_auth_type: Option<String> = None;
-    let mut found_auth_config: Option<String> = None;
-
-    for _ in 0..10 {
-        let row = conn.query_row(
-            "SELECT auth_type, auth_config, parent_id FROM collections WHERE id = ?1",
-            rusqlite::params![current_id],
-            |row| Ok((
-                row.get::<_, Option<String>>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get::<_, Option<String>>(2)?,
-            )),
-        );
-        let Ok((at, ac, parent_id)) = row else { break };
-        if at.is_some() && at.as_deref() != Some("none") {
-            found_auth_type = at;
-            found_auth_config = ac;
-            break;
-        }
-        let Some(pid) = parent_id else { break };
-        current_id = pid;
-    }
-
-    let Some(auth_type) = found_auth_type else {
-        return Ok(ResolvedAuth { headers: HashMap::new(), query_params: HashMap::new(), cognito_config: None });
-    };
-
-    // Decrypt auth_config
-    let auth_config_str = match found_auth_config {
-        Some(cfg) => {
-            let decrypted = match crate::storage::database::get_encryption_key(conn) {
-                Ok(key) => crate::crypto::decrypt(&cfg, &key).unwrap_or(cfg),
-                Err(_) => cfg,
-            };
-            interpolate(&decrypted, vars)
-        }
-        None => return Ok(ResolvedAuth { headers: HashMap::new(), query_params: HashMap::new(), cognito_config: None }),
-    };
-
-    if auth_type == "cognito" {
-        let config: serde_json::Value = serde_json::from_str(&auth_config_str)
-            .unwrap_or(serde_json::Value::Object(Default::default()));
-        let client_id = config["cognitoClientId"].as_str().unwrap_or("").to_string();
-        let username = config["cognitoUsername"].as_str().unwrap_or("").to_string();
-        let password = config["cognitoPassword"].as_str().unwrap_or("").to_string();
-        let region = config["cognitoRegion"].as_str().unwrap_or("ap-northeast-1").to_string();
-
-        return Ok(ResolvedAuth {
-            headers: HashMap::new(),
-            query_params: HashMap::new(),
-            cognito_config: Some(CognitoCredentials { client_id, username, password, region }),
-        });
-    }
-
-    // bearer / api_key / basic
-    let config_value: serde_json::Value = serde_json::from_str(&auth_config_str)
-        .unwrap_or(serde_json::Value::Object(Default::default()));
-    let mut merged = match config_value {
-        serde_json::Value::Object(m) => m,
-        _ => Default::default(),
-    };
-    if !merged.contains_key("type") {
-        merged.insert("type".to_string(), serde_json::json!(auth_type));
-    }
-    let config: AuthConfig = match serde_json::from_value(serde_json::Value::Object(merged)) {
-        Ok(c) => c,
-        Err(_) => return Ok(ResolvedAuth { headers: HashMap::new(), query_params: HashMap::new(), cognito_config: None }),
-    };
-    let applied = config.apply();
-    Ok(ResolvedAuth { headers: applied.headers, query_params: applied.query_params, cognito_config: None })
-}
-
 /// Authenticate with Cognito and get id_token (async)
-async fn cognito_get_fresh_token(creds: &CognitoCredentials) -> Result<String, AppError> {
+async fn cognito_get_fresh_token(creds: &shared::CognitoCredentials) -> Result<String, AppError> {
     let endpoint = format!("https://cognito-idp.{}.amazonaws.com/", creds.region);
     let mut auth_params = HashMap::new();
     auth_params.insert("USERNAME", serde_json::Value::String(creds.username.clone()));
@@ -197,15 +66,6 @@ async fn cognito_get_fresh_token(creds: &CognitoCredentials) -> Result<String, A
         .as_str()
         .map(|s| s.to_string())
         .ok_or_else(|| AppError::Custom("No IdToken in Cognito response".into()))
-}
-
-fn interpolate(text: &str, vars: &HashMap<String, String>) -> String {
-    let mut result = text.to_string();
-    for (key, value) in vars {
-        let placeholder = format!("{{{{{}}}}}", key);
-        result = result.replace(&placeholder, value);
-    }
-    result
 }
 
 fn build_curl_command(
@@ -250,7 +110,13 @@ pub async fn send_rest_request(
     let (resolved_auth, vars) = {
         let conn = state.0.lock().map_err(|_| AppError::Custom("DB lock poisoned".into()))?;
         let vars = build_variable_map(&conn, request.collection_id.as_deref());
-        let auth = resolve_auth_from_db(&conn, &request, &vars)?;
+        let auth = shared::resolve_auth_from_db(
+            &conn,
+            request.collection_id.as_deref(),
+            request.auth_type.as_deref(),
+            request.auth_config.as_deref(),
+            &vars,
+        )?;
         (auth, vars)
     };
     // Lock released here

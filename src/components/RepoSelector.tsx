@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BookOpenIcon,
   CheckIcon,
@@ -56,9 +56,15 @@ export function RepoSelector({ open, onClose, onSelectFiles }: Props) {
     branches,
     selectedBranch,
     openApiFiles,
+    protoFiles,
     loading,
+    loadingMore,
+    hasMoreRepos,
+    includeExternal,
     error,
     loadRepos,
+    loadMoreRepos,
+    setIncludeExternal,
     setSearchQuery,
     selectRepo,
     selectBranch,
@@ -92,31 +98,56 @@ export function RepoSelector({ open, onClose, onSelectFiles }: Props) {
     }
   }, [selectedRepo?.name]);
 
+  // Infinite scroll: observe a sentinel element at the bottom of the repo list
+  const observerRef = useRef<IntersectionObserver | null>(null);
+
+  const sentinelCallback = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (observerRef.current) observerRef.current.disconnect();
+      if (!node) return;
+      observerRef.current = new IntersectionObserver(
+        (entries) => {
+          if (entries[0]?.isIntersecting && hasMoreRepos && !loadingMore && !loading) {
+            loadMoreRepos();
+          }
+        },
+        { threshold: 0.1 }
+      );
+      observerRef.current.observe(node);
+    },
+    [hasMoreRepos, loadingMore, loading, loadMoreRepos]
+  );
+
+  // Debounced search: trigger API call after typing stops or includeExternal changes
+  useEffect(() => {
+    if (!open) return;
+    const timer = setTimeout(() => {
+      setSearchQuery(localSearch);
+      loadRepos(localSearch || undefined);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [localSearch, open, includeExternal]);
+
   const handleSearch = () => {
     setSearchQuery(localSearch);
     loadRepos(localSearch || undefined);
   };
 
-  const filteredRepos = localSearch
-    ? repos.filter(
-        (r) =>
-          r.name.toLowerCase().includes(localSearch.toLowerCase()) ||
-          r.full_name.toLowerCase().includes(localSearch.toLowerCase())
-      )
-    : repos;
+  const filteredRepos = repos;
 
   const repoOwner = selectedRepo?.full_name.split("/")[0];
   const repoName = selectedRepo?.full_name.split("/")[1];
 
+  const totalSpecFiles = openApiFiles.length + protoFiles.length;
   const allSelected =
-    openApiFiles.length > 0 && selectedFiles.size === openApiFiles.length;
+    totalSpecFiles > 0 && selectedFiles.size === totalSpecFiles;
   const someSelected = selectedFiles.size > 0 && !allSelected;
 
   const toggleSelectAll = () => {
     if (allSelected) {
       setSelectedFiles(new Set());
     } else {
-      setSelectedFiles(new Set(openApiFiles.map((f) => f.sha)));
+      setSelectedFiles(new Set([...openApiFiles, ...protoFiles].map((f) => f.sha)));
     }
   };
 
@@ -134,7 +165,8 @@ export function RepoSelector({ open, onClose, onSelectFiles }: Props) {
 
   const handleGenerateCollection = () => {
     if (!selectedRepo || !selectedBranch || selectedFiles.size === 0) return;
-    const files = openApiFiles.filter((f) => selectedFiles.has(f.sha));
+    const allSpecFiles = [...openApiFiles, ...protoFiles];
+    const files = allSpecFiles.filter((f) => selectedFiles.has(f.sha));
     onSelectFiles?.(selectedRepo, selectedBranch, files, collectionName);
     onClose();
   };
@@ -157,7 +189,13 @@ export function RepoSelector({ open, onClose, onSelectFiles }: Props) {
                 placeholder="Search repos..."
                 value={localSearch}
                 onChange={(e) => setLocalSearch(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleSearch();
+                  }
+                }}
                 className="h-8 text-xs"
               />
               <Button
@@ -170,17 +208,28 @@ export function RepoSelector({ open, onClose, onSelectFiles }: Props) {
               </Button>
             </div>
 
-            <div className="flex-1 min-h-0 border rounded-md overflow-hidden">
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <Checkbox
+                checked={includeExternal}
+                onCheckedChange={(checked) => setIncludeExternal(checked === true)}
+                className="size-3.5"
+              />
+              <span className="text-[11px] text-muted-foreground select-none">
+                Include external repos
+              </span>
+            </label>
+
+            <div className="flex-1 min-h-0 border rounded-md overflow-hidden relative">
+              {loading && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60">
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <span className="size-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    Loading...
+                  </span>
+                </div>
+              )}
               <ScrollArea className="h-full">
-                {loading && repos.length === 0 ? (
-                  <div className="flex items-center justify-center h-20 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      <span className="size-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                      Loading...
-                    </span>
-                  </div>
-                ) : (
-                  <div className="p-1 flex flex-col gap-0.5">
+                <div className="p-1 flex flex-col gap-0.5">
                     {filteredRepos.map((repo) => (
                       <button
                         key={repo.id}
@@ -208,13 +257,23 @@ export function RepoSelector({ open, onClose, onSelectFiles }: Props) {
                         </div>
                       </button>
                     ))}
-                    {filteredRepos.length === 0 && (
+                    {filteredRepos.length === 0 && !loading && (
                       <p className="text-xs text-muted-foreground text-center py-4">
                         No repositories found
                       </p>
                     )}
+                    {/* Sentinel for infinite scroll */}
+                    {hasMoreRepos && (
+                      <div ref={sentinelCallback} className="py-2 flex justify-center">
+                        {loadingMore && (
+                          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <span className="size-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                            Loading...
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
-                )}
               </ScrollArea>
             </div>
           </div>
@@ -242,58 +301,73 @@ export function RepoSelector({ open, onClose, onSelectFiles }: Props) {
                 )}
 
                 <div className="flex flex-col gap-1.5 flex-1 min-h-0">
-                  <div className="flex items-center justify-between shrink-0">
-                    <span className="text-xs font-semibold text-muted-foreground uppercase">
-                      OpenAPI Files
-                    </span>
-                    {loading ? (
-                      <span className="size-3 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin" />
-                    ) : openApiFiles.length > 0 ? (
-                      <button
-                        onClick={toggleSelectAll}
-                        className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-                      >
-                        {allSelected ? (
-                          <CheckSquareIcon className="size-3" />
-                        ) : someSelected ? (
-                          <CheckSquareIcon className="size-3 opacity-50" />
-                        ) : (
-                          <SquareIcon className="size-3" />
-                        )}
-                        {allSelected ? "Deselect All" : "Select All"}
-                      </button>
-                    ) : null}
-                  </div>
+                  {(() => {
+                    const allSpecFiles = [
+                      ...openApiFiles.map(f => ({ ...f, specType: "openapi" as const })),
+                      ...protoFiles.map(f => ({ ...f, specType: "proto" as const })),
+                    ];
+                    return (
+                      <>
+                        <div className="flex items-center justify-between shrink-0">
+                          <span className="text-xs font-semibold text-muted-foreground uppercase">
+                            Spec Files
+                          </span>
+                          {loading ? (
+                            <span className="size-3 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin" />
+                          ) : allSpecFiles.length > 0 ? (
+                            <button
+                              onClick={toggleSelectAll}
+                              className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                              {allSelected ? (
+                                <CheckSquareIcon className="size-3" />
+                              ) : someSelected ? (
+                                <CheckSquareIcon className="size-3 opacity-50" />
+                              ) : (
+                                <SquareIcon className="size-3" />
+                              )}
+                              {allSelected ? "Deselect All" : "Select All"}
+                            </button>
+                          ) : null}
+                        </div>
 
-                  <div className="flex-1 min-h-0 border rounded-md overflow-hidden">
-                    <ScrollArea className="h-full">
-                      <div className="p-2 flex flex-col gap-1">
-                        {openApiFiles.length === 0 && !loading && (
-                          <p className="text-xs text-muted-foreground text-center py-4">
-                            No OpenAPI files detected
-                          </p>
-                        )}
-                        {openApiFiles.map((file) => (
-                          <div
-                            key={file.sha}
-                            className="flex items-start gap-2 px-2 py-2 rounded hover:bg-muted/60 transition-colors cursor-pointer"
-                            onClick={() => toggleFile(file.sha)}
-                          >
-                            <Checkbox
-                              checked={selectedFiles.has(file.sha)}
-                              onCheckedChange={() => toggleFile(file.sha)}
-                              className="mt-0.5 shrink-0"
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                            <BookOpenIcon className="size-3 text-muted-foreground shrink-0 mt-0.5" />
-                            <span className="font-mono text-xs flex-1 break-all">
-                              {file.path}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </ScrollArea>
-                  </div>
+                        <div className="flex-1 min-h-0 border rounded-md overflow-hidden">
+                          <ScrollArea className="h-full">
+                            <div className="p-2 flex flex-col gap-1">
+                              {allSpecFiles.length === 0 && !loading && (
+                                <p className="text-xs text-muted-foreground text-center py-4">
+                                  No spec files detected
+                                </p>
+                              )}
+                              {allSpecFiles.map((file) => (
+                                <div
+                                  key={file.sha}
+                                  className="flex items-start gap-2 px-2 py-2 rounded hover:bg-muted/60 transition-colors cursor-pointer"
+                                  onClick={() => toggleFile(file.sha)}
+                                >
+                                  <Checkbox
+                                    checked={selectedFiles.has(file.sha)}
+                                    onCheckedChange={() => toggleFile(file.sha)}
+                                    className="mt-0.5 shrink-0"
+                                    onClick={(e) => e.stopPropagation()}
+                                  />
+                                  <BookOpenIcon className="size-3 text-muted-foreground shrink-0 mt-0.5" />
+                                  <span className="font-mono text-xs flex-1 break-all">
+                                    {file.path}
+                                  </span>
+                                  <span className={`text-[9px] px-1 py-0 rounded-sm font-mono shrink-0 ${
+                                    file.specType === "proto" ? "bg-teal-600/20 text-teal-400" : "bg-blue-600/20 text-blue-400"
+                                  }`}>
+                                    {file.specType === "proto" ? "proto" : "openapi"}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </ScrollArea>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
 
                 {/* Collection name + generate */}

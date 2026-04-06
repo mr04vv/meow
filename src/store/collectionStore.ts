@@ -47,6 +47,7 @@ export interface SavedRequest {
   sort_order: number;
   created_at: string;
   updated_at: string;
+  request_type: string;
 }
 
 export interface SyncResult {
@@ -98,6 +99,13 @@ interface CollectionState {
     collectionId?: string,
     parentCollectionId?: string,
     workspaceId?: string
+  ) => Promise<SyncResult>;
+  generateFromProto: (
+    parsedProto: unknown,
+    collectionId?: string,
+    parentCollectionId?: string,
+    workspaceId?: string,
+    collectionName?: string
   ) => Promise<SyncResult>;
   createCollection: (name: string, workspaceId: string) => Promise<Collection>;
   deleteCollection: (id: string) => Promise<void>;
@@ -271,6 +279,28 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
           base_url: baseUrl ?? null,
           collection_id: collectionId ?? null,
           workspace_id: workspaceId ?? null,
+        },
+      })) as SyncResult;
+
+      await get().loadCollections(workspaceId);
+      set({ loading: false });
+      return result;
+    } catch (e) {
+      set({ loading: false, error: String(e) });
+      throw e;
+    }
+  },
+
+  generateFromProto: async (parsedProto, collectionId, parentCollectionId, workspaceId, collectionName) => {
+    set({ loading: true, error: null });
+    try {
+      const result = (await invoke("generate_collection_from_proto", {
+        request: {
+          parsed_proto: parsedProto,
+          collection_id: collectionId ?? null,
+          parent_collection_id: parentCollectionId ?? null,
+          workspace_id: workspaceId ?? null,
+          collection_name: collectionName ?? null,
         },
       })) as SyncResult;
 

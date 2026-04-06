@@ -5,6 +5,7 @@ All notable changes to Meow will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **gRPC Unary RPC サポート**: Proto ファイルを GitHub からインポートし、gRPC リクエストを実行可能。protox + prost-reflect によるランタイム proto パース、h2 による native HTTP/2 通信。REST と同じ Collection 内に gRPC リクエストを混在可能。サイドバーに gRPC バッジ表示、Metadata/Body エディタ、gRPC ステータスコード表示に対応
 - **auth_config の AES-256-GCM 暗号化**: Cognito パスワード等の認証情報を暗号化して SQLite に保存。アプリ固有の暗号化キーを初回起動時に自動生成。復号化はデータ読み取り時に自動実行。レガシーデータ（平文）とも後方互換
 - **同一 Workspace に Collection 追加**: サイドバーの「+」ボタンから新しい Collection を作成可能。名前を入力して Enter or ボタンクリックで作成
 - **レスポンスボディのシンタックスハイライト**: CodeMirror 6 で JSON レスポンスを表示。行番号、折りたたみ、括弧対応、読み取り専用

@@ -73,6 +73,7 @@ function HomePage() {
     loadCollections,
     createCollection,
     generateFromOpenApi,
+    generateFromProto,
     environments,
     activeEnvironmentId,
     setActiveEnvironment,
@@ -227,49 +228,50 @@ function HomePage() {
           </PopoverContent>
         </Popover>
 
-        {activeWorkspaceId && (
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 text-muted-foreground"
-                title="Manage Workspaces"
-              >
-                <SettingsIcon className="size-3.5" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-56 p-1" align="start">
-              <div className="flex flex-col gap-0.5">
-                <p className="text-[10px] font-semibold text-muted-foreground uppercase px-2 py-1">
-                  Workspaces
-                </p>
-                {workspaces.map((ws) => (
-                  <div
-                    key={ws.id}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/60 group"
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground"
+              title="Manage Workspaces"
+            >
+              <SettingsIcon className="size-3.5" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-56 p-1" align="start">
+            <div className="flex flex-col gap-0.5">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase px-2 py-1">
+                Workspaces
+              </p>
+              {workspaces.length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-2">No workspaces</p>
+              )}
+              {workspaces.map((ws) => (
+                <div
+                  key={ws.id}
+                  className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/60 group"
+                >
+                  <span className="text-xs flex-1 truncate">{ws.name}</span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0"
+                    onClick={async () => {
+                      await deleteWorkspace(ws.id);
+                      if (activeWorkspaceId === ws.id) {
+                        setActiveWorkspace(null);
+                      }
+                    }}
+                    title="Delete workspace"
                   >
-                    <span className="text-xs flex-1 truncate">{ws.name}</span>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0"
-                      onClick={async () => {
-                        await deleteWorkspace(ws.id);
-                        if (activeWorkspaceId === ws.id) {
-                          setActiveWorkspace(null);
-                        }
-                      }}
-                      title="Delete workspace"
-                    >
-                      <Trash2Icon className="size-3" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </PopoverContent>
-          </Popover>
-        )}
+                    <Trash2Icon className="size-3" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
 
         <div className="flex-1" />
 
@@ -389,7 +391,14 @@ function HomePage() {
             const rootCollection = await createCollection(collectionName, workspace.id);
             const serverUrls = new Map<string, string>();
 
-            for (const file of files) {
+            // Separate files by type
+            console.log("[Import] All files:", files.map(f => f.path));
+            const openapiFiles = files.filter((f) => !f.path.endsWith(".proto"));
+            const protoFiles = files.filter((f) => f.path.endsWith(".proto"));
+            console.log("[Import] OpenAPI files:", openapiFiles.length, "Proto files:", protoFiles.length);
+
+            // Process OpenAPI files
+            for (const file of openapiFiles) {
               try {
                 const content = (await invoke("github_get_file_content", {
                   owner,
@@ -415,30 +424,80 @@ function HomePage() {
               }
             }
 
-            // Create "local" environment with BASE_URL from OpenAPI servers
+            // Process Proto files
+            if (protoFiles.length > 0) {
+              try {
+                // Fetch ALL .proto files in the repo for import resolution
+                const { treeEntries } = useGithubStore.getState();
+                const allProtoEntries = treeEntries.filter(
+                  (e) => e.type === "blob" && e.path.endsWith(".proto")
+                );
+                const protoContents = await Promise.all(
+                  allProtoEntries.map(async (file) => {
+                    const content = (await invoke("github_get_file_content", {
+                      owner,
+                      repo: repoName,
+                      path: file.path,
+                      gitRef: branch,
+                    })) as { content: string; path: string };
+                    return { filename: file.path, content: content.content };
+                  })
+                );
+
+                console.log("[Import Proto] Fetched contents for:", protoContents.map(p => p.filename));
+
+                // Parse all proto files together (for import resolution)
+                const parsedProto = await invoke("parse_proto", { files: protoContents }) as { package: string; services: unknown[]; descriptorBytes: number[] };
+                console.log("[Import Proto] parsedProto:", JSON.stringify({ package: parsedProto.package, servicesCount: parsedProto.services.length, descriptorBytesLen: parsedProto.descriptorBytes?.length }));
+
+                // Generate collection from parsed proto
+                await generateFromProto(parsedProto, rootCollection.id, undefined, workspace.id, collectionName);
+              } catch (e) {
+                console.error("[Import Proto] Error:", e);
+                toast.error(`Failed to process proto files: ${String(e)}`);
+              }
+            }
+
+            // Create "local" environment with BASE_URL / GRPC_HOST
             const firstServerUrl = serverUrls.keys().next().value;
-            if (firstServerUrl) {
+            const hasProto = protoFiles.length > 0;
+            const needsEnv = firstServerUrl || hasProto;
+
+            if (needsEnv) {
               try {
                 await invoke("create_collection_environment", {
                   collectionId: rootCollection.id,
                   name: "local",
                 });
-                // Reload environments to get the new one's ID
                 const envs = (await invoke("list_collection_environments", {
                   collectionId: rootCollection.id,
                 })) as Array<{ id: string; name: string }>;
                 const localEnv = envs.find((e) => e.name === "local");
                 if (localEnv) {
-                  const vk = (await invoke("create_variable_key", {
-                    collectionId: rootCollection.id,
-                    key: "BASE_URL",
-                    isSecret: false,
-                  })) as { id: string };
-                  await invoke("upsert_variable_value", {
-                    variableKeyId: vk.id,
-                    environmentId: localEnv.id,
-                    value: firstServerUrl,
-                  });
+                  if (firstServerUrl) {
+                    const vk = (await invoke("create_variable_key", {
+                      collectionId: rootCollection.id,
+                      key: "BASE_URL",
+                      isSecret: false,
+                    })) as { id: string };
+                    await invoke("upsert_variable_value", {
+                      variableKeyId: vk.id,
+                      environmentId: localEnv.id,
+                      value: firstServerUrl,
+                    });
+                  }
+                  if (hasProto) {
+                    const vk = (await invoke("create_variable_key", {
+                      collectionId: rootCollection.id,
+                      key: "GRPC_HOST",
+                      isSecret: false,
+                    })) as { id: string };
+                    await invoke("upsert_variable_value", {
+                      variableKeyId: vk.id,
+                      environmentId: localEnv.id,
+                      value: "localhost:50051",
+                    });
+                  }
                   await invoke("set_active_collection_environment", {
                     collectionId: rootCollection.id,
                     environmentId: localEnv.id,

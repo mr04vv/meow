@@ -274,9 +274,9 @@ export function DocsViewer({ docsJson }: DocsViewerProps) {
     );
   }
 
-  let docs: OpenApiDocs;
+  let parsed: Record<string, unknown>;
   try {
-    docs = JSON.parse(docsJson) as OpenApiDocs;
+    parsed = JSON.parse(docsJson) as Record<string, unknown>;
   } catch {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground">
@@ -284,6 +284,13 @@ export function DocsViewer({ docsJson }: DocsViewerProps) {
       </div>
     );
   }
+
+  // gRPC docs
+  if (parsed.type === "grpc") {
+    return <GrpcDocsView data={parsed} />;
+  }
+
+  const docs = parsed as unknown as OpenApiDocs;
 
   const schemas = (docs.schemas ?? {}) as Record<string, SchemaObject>;
   const parameters = (docs.parameters ?? []).filter((p) => p.name);
@@ -443,4 +450,194 @@ export function DocsViewer({ docsJson }: DocsViewerProps) {
       </div>
     </ScrollArea>
   );
+}
+
+// ─── gRPC Docs ──────────────────────────────────────────────────────────────
+
+interface GrpcField {
+  name: string;
+  number: number;
+  type: string | GrpcMessageSchema;
+  repeated: boolean;
+  map: boolean;
+  oneof?: string;
+}
+
+interface GrpcMessageSchema {
+  name: string;
+  fields: GrpcField[];
+  enum?: string;
+  values?: Array<{ name: string; number: number }>;
+}
+
+function GrpcDocsView({ data }: { data: Record<string, unknown> }) {
+  const service = data.service as string;
+  const method = data.method as string;
+  const inputType = data.input_type as string;
+  const outputType = data.output_type as string;
+  const inputSchema = data.input_schema as GrpcMessageSchema | null;
+  const outputSchema = data.output_schema as GrpcMessageSchema | null;
+
+  return (
+    <ScrollArea className="h-full">
+      <div className="p-4 space-y-4">
+        {/* Header */}
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-sm bg-teal-600 text-white">gRPC</span>
+            <span className="font-mono text-sm font-medium">{method}</span>
+          </div>
+          <p className="text-xs text-muted-foreground font-mono">{service}/{method}</p>
+        </div>
+
+        {/* Request message */}
+        {inputSchema && (
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase">Request</h3>
+            <p className="text-xs font-mono text-muted-foreground">{inputType}</p>
+            <div className="border rounded-md overflow-hidden">
+              <GrpcFieldTable schema={inputSchema} />
+            </div>
+          </div>
+        )}
+
+        {/* Response message */}
+        {outputSchema && (
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase">Response</h3>
+            <p className="text-xs font-mono text-muted-foreground">{outputType}</p>
+            <div className="border rounded-md overflow-hidden">
+              <GrpcFieldTable schema={outputSchema} />
+            </div>
+          </div>
+        )}
+      </div>
+    </ScrollArea>
+  );
+}
+
+function GrpcFieldTable({ schema, depth = 0 }: { schema: GrpcMessageSchema; depth?: number }) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  if (!schema.fields || schema.fields.length === 0) {
+    return <p className="text-xs text-muted-foreground p-2">No fields</p>;
+  }
+
+  const toggle = (name: string) => {
+    setExpanded((prev) => ({ ...prev, [name]: !prev[name] }));
+  };
+
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="border-b bg-muted/30">
+          <th className="text-left font-medium text-muted-foreground px-2 py-1.5">#</th>
+          <th className="text-left font-medium text-muted-foreground px-2 py-1.5">Field</th>
+          <th className="text-left font-medium text-muted-foreground px-2 py-1.5">Type</th>
+        </tr>
+      </thead>
+      <tbody>
+        {schema.fields.map((field) => {
+          const typeName = getGrpcTypeName(field.type);
+          const isMessage = typeof field.type === "object" && "fields" in field.type;
+          const isEnum = typeof field.type === "object" && "enum" in field.type;
+          const isExpanded = expanded[field.name] ?? (depth < 1);
+
+          return (
+            <GrpcFieldRow
+              key={field.name}
+              field={field}
+              typeName={typeName}
+              isMessage={isMessage}
+              isEnum={isEnum}
+              isExpanded={isExpanded}
+              onToggle={() => toggle(field.name)}
+              depth={depth}
+            />
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function GrpcFieldRow({
+  field,
+  typeName,
+  isMessage,
+  isEnum,
+  isExpanded,
+  onToggle,
+  depth,
+}: {
+  field: GrpcField;
+  typeName: string;
+  isMessage: boolean;
+  isEnum: boolean;
+  isExpanded: boolean;
+  onToggle: () => void;
+  depth: number;
+}) {
+  return (
+    <>
+      <tr
+        className={cn(
+          "border-b last:border-0",
+          (isMessage || isEnum) && "cursor-pointer hover:bg-muted/30"
+        )}
+        onClick={(isMessage || isEnum) ? onToggle : undefined}
+      >
+        <td className="px-2 py-1.5 text-muted-foreground/60 font-mono w-8">{field.number}</td>
+        <td className="px-2 py-1.5 font-mono">
+          <span className="flex items-center gap-1">
+            {(isMessage || isEnum) && (
+              isExpanded
+                ? <ChevronDownIcon className="size-3 text-muted-foreground" />
+                : <ChevronRightIcon className="size-3 text-muted-foreground" />
+            )}
+            {field.name}
+            {field.oneof && (
+              <span className="text-[10px] text-muted-foreground/60 ml-1">oneof:{field.oneof}</span>
+            )}
+          </span>
+        </td>
+        <td className="px-2 py-1.5 font-mono text-muted-foreground">
+          {field.repeated && <span className="text-blue-400">repeated </span>}
+          {field.map && <span className="text-blue-400">map </span>}
+          <span className={isMessage ? "text-teal-400" : isEnum ? "text-purple-400" : ""}>
+            {typeName}
+          </span>
+        </td>
+      </tr>
+      {isMessage && isExpanded && (
+        <tr>
+          <td colSpan={3} className="pl-6 pr-2 py-0">
+            <div className="border-l-2 border-muted ml-2">
+              <GrpcFieldTable schema={field.type as GrpcMessageSchema} depth={depth + 1} />
+            </div>
+          </td>
+        </tr>
+      )}
+      {isEnum && isExpanded && (
+        <tr>
+          <td colSpan={3} className="pl-6 pr-2 py-1">
+            <div className="border-l-2 border-muted ml-2 pl-2 space-y-0.5">
+              {((field.type as GrpcMessageSchema).values ?? []).map((v) => (
+                <div key={v.number} className="flex gap-2 text-[11px] font-mono">
+                  <span className="text-muted-foreground/60 w-6">{v.number}</span>
+                  <span className="text-purple-400">{v.name}</span>
+                </div>
+              ))}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function getGrpcTypeName(type: string | GrpcMessageSchema): string {
+  if (typeof type === "string") return type;
+  if ("enum" in type) return (type.enum as string).split(".").pop() ?? String(type.enum);
+  return (type.name ?? "message").split(".").pop() ?? "message";
 }

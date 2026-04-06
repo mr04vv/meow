@@ -36,22 +36,32 @@ const OPENAPI_PATTERNS = [
   /api-docs\.(yaml|yml|json)$/i,
 ];
 
+const PROTO_PATTERNS = [/\.proto$/i];
+
 interface GithubState {
   authStatus: AuthStatus | null;
   repos: GithubRepo[];
+  repoPage: number;
+  hasMoreRepos: boolean;
+  loadingMore: boolean;
   searchQuery: string;
   selectedRepo: GithubRepo | null;
   branches: GithubBranch[];
   selectedBranch: string | null;
   treeEntries: GithubTreeEntry[];
   openApiFiles: GithubTreeEntry[];
+  protoFiles: GithubTreeEntry[];
   loading: boolean;
   error: string | null;
+
+  includeExternal: boolean;
 
   checkAuthStatus: () => Promise<void>;
   login: () => Promise<void>;
   logout: () => Promise<void>;
-  loadRepos: (query?: string) => Promise<void>;
+  loadRepos: (query?: string, includeExternal?: boolean) => Promise<void>;
+  loadMoreRepos: () => Promise<void>;
+  setIncludeExternal: (value: boolean) => void;
   setSearchQuery: (query: string) => void;
   selectRepo: (repo: GithubRepo) => Promise<void>;
   selectBranch: (branch: string, owner: string, repo: string) => Promise<void>;
@@ -59,15 +69,22 @@ interface GithubState {
   resetSelection: () => void;
 }
 
+let repoRequestId = 0;
+
 export const useGithubStore = create<GithubState>((set, get) => ({
   authStatus: null,
   repos: [],
+  repoPage: 1,
+  hasMoreRepos: true,
+  loadingMore: false,
+  includeExternal: false,
   searchQuery: "",
   selectedRepo: null,
   branches: [],
   selectedBranch: null,
   treeEntries: [],
   openApiFiles: [],
+  protoFiles: [],
   loading: false,
   error: null,
 
@@ -101,20 +118,52 @@ export const useGithubStore = create<GithubState>((set, get) => ({
       selectedBranch: null,
       treeEntries: [],
       openApiFiles: [],
+  protoFiles: [],
     });
   },
 
-  loadRepos: async (query?: string) => {
-    set({ loading: true, error: null });
+  loadRepos: async (query?: string, includeExternal?: boolean) => {
+    const currentId = ++repoRequestId;
+    const external = includeExternal ?? get().includeExternal;
+    set({ loading: true, error: null, repoPage: 1, hasMoreRepos: true });
     try {
       const repos = (await invoke("github_list_repos", {
         query: query || null,
         page: 1,
+        includeExternal: external,
       })) as GithubRepo[];
-      set({ repos, loading: false });
+      if (currentId !== repoRequestId) return;
+      set({ repos, loading: false, repoPage: 1, hasMoreRepos: repos.length >= 30 });
     } catch (e) {
+      if (currentId !== repoRequestId) return;
       set({ loading: false, error: String(e) });
     }
+  },
+
+  loadMoreRepos: async () => {
+    const { hasMoreRepos, loadingMore, loading, repoPage, searchQuery, repos, includeExternal } = get();
+    if (!hasMoreRepos || loadingMore || loading) return;
+    const nextPage = repoPage + 1;
+    set({ loadingMore: true });
+    try {
+      const moreRepos = (await invoke("github_list_repos", {
+        query: searchQuery || null,
+        page: nextPage,
+        includeExternal,
+      })) as GithubRepo[];
+      set({
+        repos: [...repos, ...moreRepos],
+        repoPage: nextPage,
+        hasMoreRepos: moreRepos.length >= 30,
+        loadingMore: false,
+      });
+    } catch (e) {
+      set({ loadingMore: false, error: String(e) });
+    }
+  },
+
+  setIncludeExternal: (value) => {
+    set({ includeExternal: value });
   },
 
   setSearchQuery: (query) => {
@@ -155,7 +204,14 @@ export const useGithubStore = create<GithubState>((set, get) => ({
           OPENAPI_PATTERNS.some((p) => p.test(e.path))
       );
 
-      set({ treeEntries: entries, openApiFiles, loading: false });
+      // Filter Proto files
+      const protoFiles = entries.filter(
+        (e) =>
+          e.type === "blob" &&
+          PROTO_PATTERNS.some((p) => p.test(e.path))
+      );
+
+      set({ treeEntries: entries, openApiFiles, protoFiles, loading: false });
     } catch (e) {
       set({ loading: false, error: String(e) });
     }
@@ -165,11 +221,16 @@ export const useGithubStore = create<GithubState>((set, get) => ({
 
   resetSelection: () =>
     set({
+      repos: [],
+      repoPage: 1,
+      hasMoreRepos: true,
+      loadingMore: false,
       selectedRepo: null,
       branches: [],
       selectedBranch: null,
       treeEntries: [],
       openApiFiles: [],
+  protoFiles: [],
       searchQuery: "",
       error: null,
     }),

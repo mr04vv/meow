@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Loader2Icon, SaveIcon, SendHorizonalIcon } from "lucide-react";
 import CodeMirror, { EditorView } from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
+import { keymap } from "@codemirror/view";
+import { Prec } from "@codemirror/state";
+import { selectAll } from "@codemirror/commands";
 import { AuthEditor } from "@/components/AuthEditor";
 import { CodeMirrorUrlBar } from "@/components/CodeMirrorUrlBar";
 import { KeyValueEditor } from "@/components/KeyValueEditor";
@@ -61,6 +64,7 @@ const METHOD_COLORS: Record<HttpMethod, string> = {
   PUT: "text-orange-500",
   PATCH: "text-purple-500",
   DELETE: "text-red-500",
+  GRPC: "text-teal-500",
 };
 
 interface Props {
@@ -159,18 +163,47 @@ export function RequestEditor({ tab, hideUrlBar }: Props) {
         queryParams[effectiveAuth.apiKeyName] = effectiveAuth.apiKeyValue ?? "";
       }
 
-      const response = (await invoke("send_rest_request", {
-        request: {
-          method: tab.method,
-          url: tab.url,
-          headers: Object.keys(headers).length > 0 ? headers : null,
-          queryParams: Object.keys(queryParams).length > 0 ? queryParams : null,
-          body: tab.body || null,
-          collectionId: tab.collectionId ?? null,
-        },
-      })) as ResponseData;
+      if (tab.requestType === "grpc") {
+        // gRPC request
+        const grpcResponse = (await invoke("send_grpc_request", {
+          request: {
+            url: tab.url,
+            serviceName: tab.grpcService ?? "",
+            methodName: tab.grpcMethod ?? "",
+            metadata: Object.keys(headers).length > 0 ? headers : null,
+            body: tab.body || null,
+            requestId: tab.savedRequestId ?? null,
+            collectionId: tab.collectionId ?? null,
+          },
+        })) as { grpcStatus: number; grpcMessage: string; headers: Record<string, string>; trailers: Record<string, string>; body: string; responseTimeMs: number; bodySizeBytes: number; isJson: boolean };
 
-      setResponse(tab.id, response);
+        setResponse(tab.id, {
+          status: grpcResponse.grpcStatus === 0 ? 200 : 500,
+          statusText: grpcResponse.grpcMessage || (grpcResponse.grpcStatus === 0 ? "OK" : "Error"),
+          headers: grpcResponse.headers,
+          body: grpcResponse.body,
+          responseTimeMs: grpcResponse.responseTimeMs,
+          bodySizeBytes: grpcResponse.bodySizeBytes,
+          isJson: grpcResponse.isJson,
+          grpcStatus: grpcResponse.grpcStatus,
+          grpcMessage: grpcResponse.grpcMessage,
+          trailers: grpcResponse.trailers,
+        });
+      } else {
+        // REST request
+        const response = (await invoke("send_rest_request", {
+          request: {
+            method: tab.method,
+            url: tab.url,
+            headers: Object.keys(headers).length > 0 ? headers : null,
+            queryParams: Object.keys(queryParams).length > 0 ? queryParams : null,
+            body: tab.body || null,
+            collectionId: tab.collectionId ?? null,
+          },
+        })) as ResponseData;
+
+        setResponse(tab.id, response);
+      }
     } catch (err) {
       setResponse(tab.id, {
         status: 0,
@@ -189,6 +222,28 @@ export function RequestEditor({ tab, hideUrlBar }: Props) {
   const handleSave = useCallback(async () => {
     await saveTab(tab.id);
   }, [tab.id, saveTab]);
+
+  // Stable ref for handleSend so CodeMirror keymap always uses latest
+  const handleSendRef = useRef(handleSend);
+  handleSendRef.current = handleSend;
+
+  // CodeMirror keymap for body editor — prevents Cmd+Enter from inserting newline
+  const bodyKeymap = useMemo(
+    () =>
+      Prec.highest(
+        keymap.of([
+          {
+            key: "Mod-Enter",
+            run: () => {
+              handleSendRef.current();
+              return true;
+            },
+          },
+          { key: "Mod-a", run: selectAll },
+        ])
+      ),
+    []
+  );
 
   // Keyboard shortcuts: Cmd+Enter = send, Cmd+S = save
   useEffect(() => {
@@ -212,23 +267,34 @@ export function RequestEditor({ tab, hideUrlBar }: Props) {
       {/* URL bar — hidden when parent renders it separately */}
       {!hideUrlBar && <div className="flex items-center gap-2 p-3 border-b">
         <div className="flex flex-1 items-center border rounded-lg overflow-hidden h-9">
-          <Select
-            value={tab.method}
-            onValueChange={(v) => update({ method: v as HttpMethod })}
-          >
-            <SelectTrigger className="w-24 h-full border-0 border-r rounded-none font-mono text-sm font-bold focus:ring-0 shrink-0">
-              <SelectValue>
-                <span className={METHOD_COLORS[tab.method]}>{tab.method}</span>
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {(["GET", "POST", "PUT", "PATCH", "DELETE"] as HttpMethod[]).map((m) => (
-                <SelectItem key={m} value={m}>
-                  <span className={METHOD_COLORS[m]}>{m}</span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {tab.requestType === "grpc" ? (
+            <div className="flex items-center gap-1.5 px-3 h-full border-r shrink-0">
+              <span className="font-mono text-sm font-bold text-teal-500">gRPC</span>
+              {tab.grpcService && tab.grpcMethod && (
+                <span className="text-[10px] text-muted-foreground font-mono truncate max-w-[120px]">
+                  {tab.grpcMethod}
+                </span>
+              )}
+            </div>
+          ) : (
+            <Select
+              value={tab.method}
+              onValueChange={(v) => update({ method: v as HttpMethod })}
+            >
+              <SelectTrigger className="w-24 h-full border-0 border-r rounded-none font-mono text-sm font-bold focus:ring-0 shrink-0">
+                <SelectValue>
+                  <span className={METHOD_COLORS[tab.method]}>{tab.method}</span>
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {(["GET", "POST", "PUT", "PATCH", "DELETE"] as HttpMethod[]).map((m) => (
+                  <SelectItem key={m} value={m}>
+                    <span className={METHOD_COLORS[m]}>{m}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
 
           <div className="flex-1 h-full overflow-hidden">
             <CodeMirrorUrlBar
@@ -236,7 +302,7 @@ export function RequestEditor({ tab, hideUrlBar }: Props) {
               onChange={(value) => update({ url: value })}
               onSend={handleSend}
               variables={variableMap}
-              placeholder="https://api.example.com/endpoint"
+              placeholder={tab.requestType === "grpc" ? "localhost:50051" : "https://api.example.com/endpoint"}
             />
           </div>
         </div>
@@ -276,31 +342,47 @@ export function RequestEditor({ tab, hideUrlBar }: Props) {
 
       {/* Request config tabs */}
       <div className="flex-1 overflow-hidden flex flex-col">
-        <Tabs defaultValue="params" className="flex flex-col h-full">
+        <Tabs defaultValue={tab.requestType === "grpc" ? "body" : "params"} className="flex flex-col h-full">
           <div className="px-3 pt-2 border-b">
             <TabsList className="h-8 gap-0 bg-transparent p-0 border-b-0">
-              <TabsTrigger
-                value="params"
-                className="h-8 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none text-xs px-3"
-              >
-                Params
-                {tab.queryParams.filter((p) => p.key).length > 0 && (
-                  <span className="ml-1 text-[10px] bg-muted rounded-full px-1.5 py-0.5">
-                    {tab.queryParams.filter((p) => p.key).length}
-                  </span>
-                )}
-              </TabsTrigger>
-              <TabsTrigger
-                value="headers"
-                className="h-8 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none text-xs px-3"
-              >
-                Headers
-                {tab.headers.filter((h) => h.key).length > 0 && (
-                  <span className="ml-1 text-[10px] bg-muted rounded-full px-1.5 py-0.5">
-                    {tab.headers.filter((h) => h.key).length}
-                  </span>
-                )}
-              </TabsTrigger>
+              {tab.requestType === "grpc" ? (
+                <TabsTrigger
+                  value="metadata"
+                  className="h-8 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none text-xs px-3"
+                >
+                  Metadata
+                  {tab.headers.filter((h) => h.key).length > 0 && (
+                    <span className="ml-1 text-[10px] bg-muted rounded-full px-1.5 py-0.5">
+                      {tab.headers.filter((h) => h.key).length}
+                    </span>
+                  )}
+                </TabsTrigger>
+              ) : (
+                <>
+                  <TabsTrigger
+                    value="params"
+                    className="h-8 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none text-xs px-3"
+                  >
+                    Params
+                    {tab.queryParams.filter((p) => p.key).length > 0 && (
+                      <span className="ml-1 text-[10px] bg-muted rounded-full px-1.5 py-0.5">
+                        {tab.queryParams.filter((p) => p.key).length}
+                      </span>
+                    )}
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="headers"
+                    className="h-8 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none text-xs px-3"
+                  >
+                    Headers
+                    {tab.headers.filter((h) => h.key).length > 0 && (
+                      <span className="ml-1 text-[10px] bg-muted rounded-full px-1.5 py-0.5">
+                        {tab.headers.filter((h) => h.key).length}
+                      </span>
+                    )}
+                  </TabsTrigger>
+                </>
+              )}
               <TabsTrigger
                 value="body"
                 className="h-8 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none text-xs px-3"
@@ -321,27 +403,39 @@ export function RequestEditor({ tab, hideUrlBar }: Props) {
           </div>
 
           <div className="flex-1 overflow-y-auto">
-            <TabsContent value="params" className="p-3 m-0">
-              <KeyValueEditor
-                pairs={tab.queryParams}
-                onChange={(queryParams) => update({ queryParams })}
-                keyPlaceholder="Parameter"
-              />
-            </TabsContent>
+            {tab.requestType === "grpc" ? (
+              <TabsContent value="metadata" className="p-3 m-0">
+                <KeyValueEditor
+                  pairs={tab.headers}
+                  onChange={(headers) => update({ headers })}
+                  keyPlaceholder="Metadata key"
+                />
+              </TabsContent>
+            ) : (
+              <>
+                <TabsContent value="params" className="p-3 m-0">
+                  <KeyValueEditor
+                    pairs={tab.queryParams}
+                    onChange={(queryParams) => update({ queryParams })}
+                    keyPlaceholder="Parameter"
+                  />
+                </TabsContent>
 
-            <TabsContent value="headers" className="p-3 m-0">
-              <KeyValueEditor
-                pairs={tab.headers}
-                onChange={(headers) => update({ headers })}
-                keyPlaceholder="Header name"
-              />
-            </TabsContent>
+                <TabsContent value="headers" className="p-3 m-0">
+                  <KeyValueEditor
+                    pairs={tab.headers}
+                    onChange={(headers) => update({ headers })}
+                    keyPlaceholder="Header name"
+                  />
+                </TabsContent>
+              </>
+            )}
 
             <TabsContent value="body" className="m-0 h-full flex flex-col">
               <CodeMirror
                 value={tab.body}
                 onChange={(value) => update({ body: value })}
-                extensions={[json(), bodyEditorTheme]}
+                extensions={[bodyKeymap, json(), bodyEditorTheme]}
                 theme="dark"
                 height="100%"
                 className="flex-1 h-full text-sm"

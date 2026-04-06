@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
-import { EditorView } from "@codemirror/view";
+import { EditorView, keymap } from "@codemirror/view";
+import { EditorState, Prec } from "@codemirror/state";
+import { selectAll } from "@codemirror/commands";
 import { AlertTriangleIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -125,19 +127,34 @@ export function ResponseViewer({ response, loading, docsJson, tab }: Props) {
             <div className="flex flex-col flex-1 overflow-hidden">
               {/* Status bar */}
               <div className="flex items-center gap-3 px-4 py-2.5 border-b bg-muted/30 shrink-0">
-                {response.status > 0 ? (
+                {response.status > 0 || response.grpcStatus !== undefined ? (
                   <>
                     <span
                       className={cn(
                         "font-mono font-bold text-lg leading-none",
-                        getStatusColorClass(response.status)
+                        response.grpcStatus !== undefined
+                          ? (response.grpcStatus === 0 ? "text-emerald-400" : "text-red-400")
+                          : getStatusColorClass(response.status)
                       )}
                     >
-                      {response.status}
-                      {(response.statusText || getStatusText(response.status)) && (
-                        <span className="text-sm font-normal ml-1.5 opacity-80">
-                          {response.statusText || getStatusText(response.status)}
-                        </span>
+                      {response.grpcStatus !== undefined ? (
+                        <>
+                          gRPC {response.grpcStatus}
+                          {response.grpcMessage && (
+                            <span className="text-sm font-normal ml-1.5 opacity-80">
+                              {response.grpcMessage}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {response.status}
+                          {(response.statusText || getStatusText(response.status)) && (
+                            <span className="text-sm font-normal ml-1.5 opacity-80">
+                              {response.statusText || getStatusText(response.status)}
+                            </span>
+                          )}
+                        </>
                       )}
                     </span>
                     <span className="text-muted-foreground/40 select-none">·</span>
@@ -226,6 +243,7 @@ const responseBodyTheme = EditorView.theme({
     backgroundColor: "transparent",
     color: "#e5e5e5",
     fontSize: "13px",
+    height: "100%",
   },
   ".cm-gutters": {
     backgroundColor: "transparent",
@@ -243,6 +261,7 @@ const responseBodyTheme = EditorView.theme({
   },
   ".cm-scroller": {
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    overflow: "auto",
   },
   "&.cm-focused": {
     outline: "none",
@@ -270,8 +289,8 @@ function ResponseBodyViewer({ body, isJson }: { body: string; isJson: boolean })
   const extensions = useMemo(() => {
     const exts = [
       responseBodyTheme,
-      EditorView.editable.of(false),
-      EditorView.lineWrapping,
+      EditorState.readOnly.of(true),
+      Prec.highest(keymap.of([{ key: "Mod-a", run: selectAll }])),
     ];
     if (isJson) {
       exts.push(json());
@@ -291,7 +310,7 @@ function ResponseBodyViewer({ body, isJson }: { body: string; isJson: boolean })
         highlightActiveLine: false,
         bracketMatching: true,
       }}
-      className="h-full"
+      className="h-full overflow-hidden cm-response-body"
     />
   );
 }
