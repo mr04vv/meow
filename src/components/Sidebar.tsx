@@ -5,6 +5,7 @@ import {
   FolderIcon,
   FolderOpenIcon,
   FolderPlusIcon,
+  GithubIcon,
   LogOutIcon,
   MoreHorizontalIcon,
   PlusIcon,
@@ -30,7 +31,11 @@ import type { HttpMethod, KeyValuePair, RequestTab } from "@/store/requestStore"
 import { useRequestStore } from "@/store/requestStore";
 import { useWorkspaceStore } from "@/store/workspaceStore";
 
-export function Sidebar() {
+interface SidebarProps {
+  onImportFromGithub?: () => void;
+}
+
+export function Sidebar({ onImportFromGithub }: SidebarProps) {
   const { authStatus, checkAuthStatus, logout } = useGithubStore();
   const {
     collections,
@@ -220,6 +225,23 @@ export function Sidebar() {
                       <FolderPlusIcon className="size-3" />
                     </Button>
                   </div>
+                  {onImportFromGithub && (
+                    <>
+                      <Separator />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs justify-start gap-2 w-full"
+                        onClick={() => {
+                          setAddMenuOpen(false);
+                          onImportFromGithub();
+                        }}
+                      >
+                        <GithubIcon className="size-3" />
+                        Import from GitHub
+                      </Button>
+                    </>
+                  )}
                 </div>
               </PopoverContent>
             </Popover>

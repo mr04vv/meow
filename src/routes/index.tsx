@@ -84,7 +84,7 @@ function HomePage() {
 
   const [wsMenuOpen, setWsMenuOpen] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
-  const [repoSelectorOpen, setRepoSelectorOpen] = useState(false);
+  const [repoSelectorMode, setRepoSelectorMode] = useState<null | "workspace" | "collection">(null);
   const [envManagerOpen, setEnvManagerOpen] = useState(false);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [tabCloseConfirmId, setTabCloseConfirmId] = useState<string | null>(null);
@@ -147,10 +147,10 @@ function HomePage() {
     }
   }, [isDirty, closeTab]);
 
-  const handleImportFromGitHub = () => {
+  const handleImportFromGitHub = (mode: "workspace" | "collection" = "workspace") => {
     setWsMenuOpen(false);
     if (authStatus?.authenticated) {
-      setRepoSelectorOpen(true);
+      setRepoSelectorMode(mode);
     } else {
       setLoginOpen(true);
     }
@@ -218,7 +218,7 @@ function HomePage() {
                 <CommandSeparator />
                 <CommandGroup>
                   <CommandItem
-                    onSelect={handleImportFromGitHub}
+                    onSelect={() => handleImportFromGitHub("workspace")}
                     className="text-xs gap-2"
                   >
                     <GithubIcon className="size-3 shrink-0" />
@@ -319,7 +319,7 @@ function HomePage() {
       {/* Main layout */}
       <ResizablePanelGroup orientation="horizontal" className="flex-1">
         <ResizablePanel defaultSize="20%" minSize="15%" maxSize="35%">
-          <Sidebar />
+          <Sidebar onImportFromGithub={() => handleImportFromGitHub("collection")} />
         </ResizablePanel>
 
         <ResizableHandle withHandle />
@@ -364,12 +364,33 @@ function HomePage() {
                 <CollectionView />
               ) : (
                 <div className="flex items-center justify-center h-full text-muted-foreground">
-                  <div className="flex flex-col items-center gap-3 text-center">
+                  <div className="flex flex-col items-center gap-4 text-center">
                     <img src={notoCatSvg} alt="" className="size-12 select-none" />
                     <p className="text-sm font-medium">Welcome to Meow</p>
                     <p className="text-xs text-muted-foreground/70">
                       Select a workspace or import from GitHub to get started
                     </p>
+                    {authStatus?.authenticated ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2 text-xs"
+                        onClick={() => handleImportFromGitHub(activeWorkspaceId ? "collection" : "workspace")}
+                      >
+                        <GithubIcon className="size-3.5" />
+                        Import from GitHub
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2 text-xs"
+                        onClick={() => setLoginOpen(true)}
+                      >
+                        <GithubIcon className="size-3.5" />
+                        Sign in with GitHub
+                      </Button>
+                    )}
                   </div>
                 </div>
               )}
@@ -381,16 +402,26 @@ function HomePage() {
       {/* Dialogs */}
       <GithubLoginDialog open={loginOpen} onClose={() => setLoginOpen(false)} />
       <RepoSelector
-        open={repoSelectorOpen}
-        onClose={() => setRepoSelectorOpen(false)}
+        open={repoSelectorMode !== null}
+        onClose={() => setRepoSelectorMode(null)}
         onSelectFiles={async (repo: GithubRepo, branch: string, files: GithubTreeEntry[], collectionName: string) => {
-          setRepoSelectorOpen(false);
+          const importMode = repoSelectorMode;
+          setRepoSelectorMode(null);
           if (files.length === 0) return;
 
           const [owner, repoName] = repo.full_name.split("/");
           try {
-            const workspace = await useWorkspaceStore.getState().createWorkspace(collectionName);
-            const rootCollection = await createCollection(collectionName, workspace.id);
+            let workspaceId: string;
+            if (importMode === "collection" && activeWorkspaceId) {
+              // Add collection to existing workspace
+              workspaceId = activeWorkspaceId;
+            } else {
+              // Create new workspace
+              const workspace = await useWorkspaceStore.getState().createWorkspace(collectionName);
+              workspaceId = workspace.id;
+              setActiveWorkspace(workspaceId);
+            }
+            const rootCollection = await createCollection(collectionName, workspaceId);
             const serverUrls = new Map<string, string>();
 
             // Separate files by type
@@ -420,7 +451,7 @@ function HomePage() {
                   serverUrls.set(serverUrl, file.path);
                 }
                 // Use {{BASE_URL}} as placeholder — resolved via environment variables
-                await generateFromOpenApi(spec, "{{BASE_URL}}", rootCollection.id, undefined, workspace.id);
+                await generateFromOpenApi(spec, "{{BASE_URL}}", rootCollection.id, undefined, workspaceId);
               } catch (e) {
                 toast.error(`Failed to process ${file.path}: ${String(e)}`);
               }
@@ -453,7 +484,7 @@ function HomePage() {
                 console.log("[Import Proto] parsedProto:", JSON.stringify({ package: parsedProto.package, servicesCount: parsedProto.services.length, descriptorBytesLen: parsedProto.descriptorBytes?.length }));
 
                 // Generate collection from parsed proto
-                await generateFromProto(parsedProto, rootCollection.id, undefined, workspace.id, collectionName);
+                await generateFromProto(parsedProto, rootCollection.id, undefined, workspaceId, collectionName);
               } catch (e) {
                 console.error("[Import Proto] Error:", e);
                 toast.error(`Failed to process proto files: ${String(e)}`);
@@ -522,8 +553,7 @@ function HomePage() {
             });
 
             toast.success(`Imported "${collectionName}" successfully`);
-            setActiveWorkspace(workspace.id);
-            await loadCollections(workspace.id);
+            await loadCollections(workspaceId);
             setActiveCollection(rootCollection.id);
           } catch (e) {
             toast.error(`Failed to import: ${String(e)}`);

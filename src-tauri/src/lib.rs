@@ -122,6 +122,11 @@ pub fn run() {
             // Import source
             update_collection_import_source,
         ])
+        .on_window_event(|_window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                std::process::exit(0);
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
