@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { PlusIcon, XIcon } from "lucide-react";
 import { MethodBadge } from "@/components/MethodBadge";
 import { cn } from "@/lib/utils";
@@ -10,9 +10,17 @@ interface TabBarProps {
 }
 
 export function TabBar({ onCloseTab }: TabBarProps) {
-  const { tabs, activeTabId, setActiveTab, closeTab, addTab, pinTab, isDirty, originalSnapshots } = useRequestStore();
-  // Subscribe to originalSnapshots to re-render when dirty state changes
+  const { tabs, activeTabId, setActiveTab, closeTab, addTab, pinTab, isDirty, originalSnapshots, reorderTabs } = useRequestStore();
   void originalSnapshots;
+
+  const [dragState, setDragState] = useState<{
+    dragging: boolean;
+    fromIndex: number;
+    currentIndex: number;
+    startX: number;
+  } | null>(null);
+
+  const tabRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   const handleCloseTab = (tabId: string) => {
     if (onCloseTab) {
@@ -22,7 +30,6 @@ export function TabBar({ onCloseTab }: TabBarProps) {
     }
   };
 
-  // Cmd+W = close active tab, Cmd+T/N = new tab (handled in parent, here for close)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
@@ -36,25 +43,88 @@ export function TabBar({ onCloseTab }: TabBarProps) {
     return () => window.removeEventListener("keydown", handler);
   }, [activeTabId, handleCloseTab]);
 
+  const handleMouseDown = useCallback((e: React.MouseEvent, index: number) => {
+    // Only left mouse button, ignore close button clicks
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("button") || target.closest("[aria-label]")) return;
+
+    setDragState({
+      dragging: false,
+      fromIndex: index,
+      currentIndex: index,
+      startX: e.clientX,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!dragState) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      setDragState((prev) => {
+        if (!prev) return null;
+        const isDragging = prev.dragging || Math.abs(e.clientX - prev.startX) > 5;
+        if (!isDragging) return prev;
+
+        // Find which tab we're over
+        let newIndex = prev.fromIndex;
+        for (let i = 0; i < tabRefs.current.length; i++) {
+          const el = tabRefs.current[i];
+          if (!el) continue;
+          const rect = el.getBoundingClientRect();
+          const mid = rect.left + rect.width / 2;
+          if (e.clientX < mid) {
+            newIndex = i;
+            break;
+          }
+          newIndex = i;
+        }
+
+        return { ...prev, dragging: true, currentIndex: newIndex };
+      });
+    };
+
+    const handleMouseUp = () => {
+      if (dragState?.dragging && dragState.fromIndex !== dragState.currentIndex) {
+        reorderTabs(dragState.fromIndex, dragState.currentIndex);
+      }
+      setDragState(null);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [dragState, reorderTabs]);
+
   return (
     <div className="flex items-center border-b bg-muted/10 overflow-x-auto shrink-0">
-      {tabs.map((tab) => {
+      {tabs.map((tab, index) => {
         const isActive = activeTabId === tab.id;
         const dirty = isDirty(tab.id);
         const isPreview = tab.isPreview;
+        const isDragging = dragState?.dragging && dragState.fromIndex === index;
+        const isDropTarget = dragState?.dragging && dragState.currentIndex === index && dragState.fromIndex !== index;
         return (
           <div
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            ref={(el) => { tabRefs.current[index] = el; }}
+            onMouseDown={(e) => handleMouseDown(e, index)}
+            onClick={() => {
+              if (!dragState?.dragging) setActiveTab(tab.id);
+            }}
             onDoubleClick={() => {
               if (isPreview) pinTab(tab.id);
             }}
             className={cn(
-              "flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 border-r cursor-pointer min-w-0 max-w-48 shrink-0 group hover:bg-muted/40 transition-colors relative",
-              isActive && "bg-background"
+              "flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 border-r cursor-grab min-w-0 max-w-48 shrink-0 group hover:bg-muted/40 transition-colors relative select-none",
+              isActive && "bg-background",
+              isDragging && "opacity-40",
+              isDropTarget && "border-l-2 border-l-primary"
             )}
           >
-            {/* Active indicator */}
             {isActive && (
               <span className="absolute top-0 left-0 right-0 h-0.5 bg-primary" />
             )}
@@ -68,7 +138,6 @@ export function TabBar({ onCloseTab }: TabBarProps) {
               {tab.name}
             </span>
 
-            {/* Close / dirty indicator area */}
             <div className="shrink-0 w-5 h-5 flex items-center justify-center">
               {dirty ? (
                 <span

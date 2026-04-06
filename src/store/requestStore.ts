@@ -67,6 +67,7 @@ interface RequestState {
   originalSnapshots: Record<string, string>;
 
   addTab: () => void;
+  reorderTabs: (fromIndex: number, toIndex: number) => void;
   openPreviewTab: (tab: Omit<RequestTab, "id" | "isPreview">) => void;
   pinTab: (tabId: string) => void;
   pinActiveTab: () => void;
@@ -119,6 +120,14 @@ export const useRequestStore = create<RequestState>((set, get) => {
     loading: {},
     docs: {},
     originalSnapshots: {},
+
+    reorderTabs: (fromIndex, toIndex) =>
+      set((state) => {
+        const tabs = [...state.tabs];
+        const [moved] = tabs.splice(fromIndex, 1);
+        tabs.splice(toIndex, 0, moved);
+        return { tabs };
+      }),
 
     addTab: () =>
       set((state) => {

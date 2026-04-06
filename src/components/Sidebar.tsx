@@ -9,7 +9,6 @@ import {
   LogOutIcon,
   MoreHorizontalIcon,
   PlusIcon,
-  RefreshCwIcon,
   Trash2Icon,
   UserCircle2Icon,
   XIcon,
@@ -40,7 +39,6 @@ export function Sidebar({ onImportFromGithub }: SidebarProps) {
   const {
     collections,
     requests,
-    loading: collLoading,
     loadCollections,
     loadRequests,
     deleteCollection,
@@ -246,18 +244,6 @@ export function Sidebar({ onImportFromGithub }: SidebarProps) {
               </PopoverContent>
             </Popover>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-5 w-5 text-muted-foreground"
-            onClick={async () => {
-              await loadCollections(activeWorkspaceId ?? undefined);
-            }}
-            title="Refresh"
-            disabled={collLoading}
-          >
-            <RefreshCwIcon className={`size-3 ${collLoading ? "animate-spin" : ""}`} />
-          </Button>
         </div>
       </div>
 
@@ -528,7 +514,7 @@ function RequestItem({ request, depth, onOpen, onOpenPinned }: RequestItemProps)
   return (
     <button
       onClick={handleClick}
-      className="flex items-center gap-2 py-1 w-full hover:bg-muted/50 transition-colors group text-left pr-2"
+      className="flex items-center gap-2 py-1 w-full hover:bg-muted/50 transition-colors group text-left pr-2 cursor-pointer"
       style={{ paddingLeft: `${20 + depth * 12}px` }}
     >
       <MethodBadge method={request.method} size="xs" />
