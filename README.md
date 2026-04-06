@@ -59,7 +59,11 @@ Output:
 - **macOS**: `src-tauri/target/release/bundle/macos/Meow.app` and `.dmg`
 - **Zip for sharing**: `cd src-tauri/target/release/bundle/macos && zip -r Meow.zip Meow.app`
 
-> **Note**: The app is not code-signed. On first launch, right-click → Open to bypass Gatekeeper.
+> **Note**: The app is not code-signed. macOS may show "Meow is damaged" when opening.
+> Run the following command in Terminal to fix this:
+> ```bash
+> sudo xattr -rd com.apple.quarantine /Applications/Meow.app
+> ```
 
 ## Usage
 
