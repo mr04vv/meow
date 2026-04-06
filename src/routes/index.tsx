@@ -10,6 +10,7 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { toast } from "sonner";
+import notoCatSvg from "@/assets/noto-cat.svg";
 import { CollectionView } from "@/components/CollectionView";
 import { EnvironmentManagerDialog } from "@/components/EnvironmentManagerDialog";
 import { GithubLoginDialog } from "@/components/GithubLoginDialog";
@@ -159,7 +160,7 @@ function HomePage() {
     <div className="flex flex-col h-screen overflow-hidden bg-background text-foreground">
       {/* Header */}
       <header className="flex items-center px-3 h-10 border-b shrink-0 bg-muted/20 gap-2">
-        <span className="text-sm font-semibold select-none">🐱 Meow</span>
+        <span className="text-sm font-semibold select-none flex items-center gap-1"><img src={notoCatSvg} alt="" className="size-4" /> Meow</span>
 
         <Separator orientation="vertical" className="h-5" />
 
@@ -364,7 +365,7 @@ function HomePage() {
               ) : (
                 <div className="flex items-center justify-center h-full text-muted-foreground">
                   <div className="flex flex-col items-center gap-3 text-center">
-                    <span className="text-5xl select-none">🐱</span>
+                    <img src={notoCatSvg} alt="" className="size-12 select-none" />
                     <p className="text-sm font-medium">Welcome to Meow</p>
                     <p className="text-xs text-muted-foreground/70">
                       Select a workspace or import from GitHub to get started
