@@ -75,7 +75,7 @@ fn save_token(conn: &rusqlite::Connection, token: &str, username: Option<&str>) 
     Ok(())
 }
 
-fn load_token(conn: &rusqlite::Connection) -> Result<Option<String>, AppError> {
+pub fn load_token(conn: &rusqlite::Connection) -> Result<Option<String>, AppError> {
     match conn.query_row(
         "SELECT access_token FROM github_auth WHERE id = 'default'",
         [],
@@ -92,7 +92,7 @@ fn delete_token(conn: &rusqlite::Connection) -> Result<(), AppError> {
     Ok(())
 }
 
-fn build_octocrab(token: &str) -> Result<Octocrab, AppError> {
+pub fn build_octocrab(token: &str) -> Result<Octocrab, AppError> {
     Octocrab::builder()
         .personal_token(token.to_string())
         .build()

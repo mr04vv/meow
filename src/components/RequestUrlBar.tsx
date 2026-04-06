@@ -1,6 +1,7 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Loader2Icon, SaveIcon, SendHorizonalIcon } from "lucide-react";
+import { CheckIcon, ChevronsUpDownIcon, GitBranchIcon, Loader2Icon, RefreshCwIcon, SaveIcon, SendHorizonalIcon } from "lucide-react";
+import { toast } from "sonner";
 import { CodeMirrorUrlBar } from "@/components/CodeMirrorUrlBar";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,7 +11,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 import { useCollectionStore } from "@/store/collectionStore";
+import type { ImportSource } from "@/store/collectionStore";
 import type { AuthConfig, HttpMethod, RequestTab, ResponseData } from "@/store/requestStore";
 import { useRequestStore } from "@/store/requestStore";
 
@@ -257,8 +273,154 @@ export function RequestUrlBar({ tab }: Props) {
             </>
           )}
         </Button>
+
+        {/* Sync button — shown when collection has import_source */}
+        <SyncButton collectionId={tab.collectionId} />
       </div>
 
+    </div>
+  );
+}
+
+function SyncButton({ collectionId }: { collectionId: string | null }) {
+  const { collections, generateFromOpenApi, generateFromProto, loadRequests, updateImportSource } = useCollectionStore();
+  const [syncing, setSyncing] = useState(false);
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+  const [branches, setBranches] = useState<Array<{ name: string }>>([]);
+  const [selectedBranch, setSelectedBranch] = useState<string>("");
+
+  const collection = collectionId ? collections.find((c) => c.id === collectionId) : null;
+  const importSource: ImportSource | null = collection?.import_source
+    ? (() => { try { return JSON.parse(collection.import_source) as ImportSource; } catch { return null; } })()
+    : null;
+
+  useEffect(() => {
+    if (importSource) {
+      setSelectedBranch(importSource.branch);
+    }
+  }, [collection?.import_source]);
+
+  // Load branches when popover opens
+  const loadBranches = async () => {
+    if (!importSource || branches.length > 0) return;
+    try {
+      const b = (await invoke("github_list_branches", {
+        owner: importSource.owner,
+        repo: importSource.repo,
+      })) as Array<{ name: string }>;
+      setBranches(b);
+    } catch {
+      setBranches([]);
+    }
+  };
+
+  if (!importSource || !collectionId) return null;
+
+  const handleSync = async (branch: string) => {
+    setSyncing(true);
+    try {
+      const { owner, repo, files, spec_type } = importSource;
+      const openapiFiles = files.filter((f) => !f.endsWith(".proto"));
+      const protoFiles = files.filter((f) => f.endsWith(".proto"));
+
+      if (spec_type === "proto" || (spec_type === "mixed" && protoFiles.length > 0)) {
+        const protoContents = await Promise.all(
+          protoFiles.map(async (path) => {
+            const content = (await invoke("github_get_file_content", {
+              owner, repo, path, gitRef: branch,
+            })) as { content: string; path: string };
+            return { filename: path, content: content.content };
+          })
+        );
+        const parsedProto = await invoke("parse_proto", { files: protoContents });
+        await generateFromProto(parsedProto, collectionId, undefined, collection?.workspace_id ?? undefined);
+      }
+
+      if (spec_type === "openapi" || (spec_type === "mixed" && openapiFiles.length > 0)) {
+        for (const path of openapiFiles) {
+          const content = (await invoke("github_get_file_content", {
+            owner, repo, path, gitRef: branch,
+          })) as { content: string; path: string };
+          const spec = await invoke("parse_openapi", { content: content.content, filename: path });
+          await generateFromOpenApi(spec as never, "{{BASE_URL}}", collectionId, undefined, collection?.workspace_id ?? undefined);
+        }
+      }
+
+      // Update branch in import_source if changed
+      if (branch !== importSource.branch) {
+        await updateImportSource(collectionId, { ...importSource, branch });
+      }
+
+      await loadRequests(collectionId);
+      toast.success("Sync completed");
+    } catch (e) {
+      toast.error(`Sync failed: ${String(e)}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center shrink-0">
+      <Popover open={branchMenuOpen} onOpenChange={(open) => { setBranchMenuOpen(open); if (open) loadBranches(); }}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-9 text-xs gap-1 font-mono text-muted-foreground px-2"
+          >
+            <GitBranchIcon className="size-3" />
+            {selectedBranch || importSource.branch}
+            <ChevronsUpDownIcon className="size-2.5 opacity-50" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[220px] p-0" align="end">
+          <Command>
+            <CommandInput placeholder="Search branches..." className="h-8 text-xs" />
+            <CommandList>
+              <CommandEmpty className="py-3 text-center text-xs text-muted-foreground">
+                No branches found
+              </CommandEmpty>
+              <CommandGroup>
+                {branches.map((b) => (
+                  <CommandItem
+                    key={b.name}
+                    value={b.name}
+                    onSelect={() => {
+                      setSelectedBranch(b.name);
+                      setBranchMenuOpen(false);
+                    }}
+                    className="text-xs font-mono"
+                  >
+                    <CheckIcon
+                      className={cn(
+                        "size-3 mr-2 shrink-0",
+                        selectedBranch === b.name ? "opacity-100" : "opacity-0"
+                      )}
+                    />
+                    {b.name}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-9 w-9 text-muted-foreground"
+        onClick={() => handleSync(selectedBranch || importSource.branch)}
+        disabled={syncing}
+        title={`Sync from ${importSource.owner}/${importSource.repo}@${selectedBranch || importSource.branch}`}
+      >
+        {syncing ? (
+          <Loader2Icon className="size-3.5 animate-spin" />
+        ) : (
+          <RefreshCwIcon className="size-3.5" />
+        )}
+      </Button>
     </div>
   );
 }

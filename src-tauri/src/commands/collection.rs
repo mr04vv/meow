@@ -352,6 +352,7 @@ pub async fn create_collection(
         active_environment_id: None,
         created_at: now.clone(),
         updated_at: now,
+        import_source: None,
     })
 }
 
@@ -365,13 +366,13 @@ pub async fn list_collections(
 
     let collections = if let Some(wid) = workspace_id {
         let mut stmt = conn.prepare(
-            "SELECT id, workspace_id, name, parent_id, spec_path, auth_type, auth_config, active_environment_id, created_at, updated_at FROM collections WHERE workspace_id = ?1 ORDER BY name ASC",
+            "SELECT id, workspace_id, name, parent_id, spec_path, auth_type, auth_config, active_environment_id, created_at, updated_at, import_source FROM collections WHERE workspace_id = ?1 ORDER BY name ASC",
         )?;
         let x = stmt.query_map(rusqlite::params![wid], row_to_collection_info)?
             .collect::<Result<Vec<_>, _>>()?; x
     } else {
         let mut stmt = conn.prepare(
-            "SELECT id, workspace_id, name, parent_id, spec_path, auth_type, auth_config, active_environment_id, created_at, updated_at FROM collections ORDER BY name ASC",
+            "SELECT id, workspace_id, name, parent_id, spec_path, auth_type, auth_config, active_environment_id, created_at, updated_at, import_source FROM collections ORDER BY name ASC",
         )?;
         let x = stmt.query_map([], row_to_collection_info)?
             .collect::<Result<Vec<_>, _>>()?; x
@@ -392,6 +393,7 @@ fn row_to_collection_info(row: &rusqlite::Row<'_>) -> rusqlite::Result<Collectio
         active_environment_id: row.get(7)?,
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
+        import_source: row.get(10)?,
     })
 }
 
@@ -407,6 +409,7 @@ pub struct CollectionInfo {
     pub active_environment_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub import_source: Option<String>,
 }
 
 /// Delete a collection and all its child collections and requests
@@ -878,4 +881,20 @@ pub async fn generate_collection_from_proto(
         requests_skipped: skipped,
         requests_removed: removed,
     })
+}
+
+// ─── Import source management ───────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn update_collection_import_source(
+    state: State<'_, DbState>,
+    collection_id: String,
+    import_source: String,
+) -> Result<(), AppError> {
+    let conn = state.0.lock().map_err(|_| AppError::Custom("DB lock poisoned".into()))?;
+    conn.execute(
+        "UPDATE collections SET import_source = ?1, updated_at = ?2 WHERE id = ?3",
+        rusqlite::params![import_source, epoch_now(), collection_id],
+    )?;
+    Ok(())
 }

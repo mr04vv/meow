@@ -11,6 +11,15 @@ export interface Collection {
   auth_type: string | null;
   auth_config: string | null;
   active_environment_id: string | null;
+  import_source: string | null;
+}
+
+export interface ImportSource {
+  owner: string;
+  repo: string;
+  branch: string;
+  files: string[];
+  spec_type: "openapi" | "proto" | "mixed";
 }
 
 export interface CollectionEnvironment {
@@ -109,6 +118,7 @@ interface CollectionState {
   ) => Promise<SyncResult>;
   createCollection: (name: string, workspaceId: string) => Promise<Collection>;
   deleteCollection: (id: string) => Promise<void>;
+  updateImportSource: (collectionId: string, importSource: ImportSource) => Promise<void>;
   createRequest: (req: Omit<SavedRequest, "id" | "created_at" | "updated_at">) => Promise<SavedRequest>;
   updateRequest: (id: string, updates: Partial<SavedRequest>) => Promise<void>;
   deleteRequest: (id: string) => Promise<void>;
@@ -328,6 +338,14 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
       const requests = { ...state.requests };
       delete requests[id];
       return { requests };
+    });
+    await get().loadCollections();
+  },
+
+  updateImportSource: async (collectionId, importSource) => {
+    await invoke("update_collection_import_source", {
+      collectionId,
+      importSource: JSON.stringify(importSource),
     });
     await get().loadCollections();
   },

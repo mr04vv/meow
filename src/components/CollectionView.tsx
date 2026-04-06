@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  CheckIcon,
+  ChevronsUpDownIcon,
   EyeIcon,
   EyeOffIcon,
   FolderIcon,
+  GitBranchIcon,
+  Loader2Icon,
   PlusIcon,
+  RefreshCwIcon,
   SaveIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -22,7 +27,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 import { useCollectionStore } from "@/store/collectionStore";
+import type { ImportSource } from "@/store/collectionStore";
 import type { AuthConfig } from "@/store/requestStore";
 
 export function CollectionView() {
@@ -44,6 +64,9 @@ export function CollectionView() {
     loadVariables,
     updateCollectionAuth,
     loadRequests,
+    generateFromOpenApi,
+    generateFromProto,
+    updateImportSource,
   } = useCollectionStore();
 
   const collection = activeCollectionId
@@ -61,6 +84,82 @@ export function CollectionView() {
   const [newValue, setNewValue] = useState("");
   const [newIsSecret, setNewIsSecret] = useState(false);
   const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set());
+
+  // Sync state
+  const importSource: ImportSource | null = collection?.import_source
+    ? (() => { try { return JSON.parse(collection.import_source) as ImportSource; } catch { return null; } })()
+    : null;
+  const [syncBranch, setSyncBranch] = useState<string>(importSource?.branch ?? "");
+  const [branches, setBranches] = useState<Array<{ name: string }>>([]);
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  // Load branches when import source changes
+  useEffect(() => {
+    if (!importSource) return;
+    setSyncBranch(importSource.branch);
+    (async () => {
+      try {
+        const b = (await invoke("github_list_branches", {
+          owner: importSource.owner,
+          repo: importSource.repo,
+        })) as Array<{ name: string }>;
+        setBranches(b);
+      } catch {
+        setBranches([]);
+      }
+    })();
+  }, [collection?.import_source]);
+
+  const handleSync = useCallback(async () => {
+    if (!importSource || !activeCollectionId) return;
+    setSyncing(true);
+    try {
+      const owner = importSource.owner;
+      const repoName = importSource.repo;
+      const branch = syncBranch || importSource.branch;
+      const filePaths = importSource.files;
+      const specType = importSource.spec_type;
+
+      const openapiFiles = filePaths.filter((f) => !f.endsWith(".proto"));
+      const protoFiles = filePaths.filter((f) => f.endsWith(".proto"));
+
+      if (specType === "proto" || (specType === "mixed" && protoFiles.length > 0)) {
+        const protoContents = await Promise.all(
+          protoFiles.map(async (path) => {
+            const content = (await invoke("github_get_file_content", {
+              owner, repo: repoName, path, gitRef: branch,
+            })) as { content: string; path: string };
+            return { filename: path, content: content.content };
+          })
+        );
+        const parsedProto = await invoke("parse_proto", { files: protoContents });
+        await generateFromProto(parsedProto, activeCollectionId, undefined, collection?.workspace_id ?? undefined);
+      }
+
+      if (specType === "openapi" || (specType === "mixed" && openapiFiles.length > 0)) {
+        for (const path of openapiFiles) {
+          const content = (await invoke("github_get_file_content", {
+            owner, repo: repoName, path, gitRef: branch,
+          })) as { content: string; path: string };
+          const spec = await invoke("parse_openapi", { content: content.content, filename: path });
+          await generateFromOpenApi(spec as never, "{{BASE_URL}}", activeCollectionId, undefined, collection?.workspace_id ?? undefined);
+        }
+      }
+
+      // Update branch if changed
+      if (branch !== importSource.branch) {
+        await updateImportSource(activeCollectionId, { ...importSource, branch });
+      }
+
+      await loadRequests(activeCollectionId);
+      toast.success("Sync completed successfully");
+    } catch (e) {
+      toast.error(`Sync failed: ${String(e)}`);
+    } finally {
+      setSyncing(false);
+    }
+  }, [importSource, activeCollectionId, syncBranch, collection]);
 
   // Load environments when active collection changes
   useEffect(() => {
@@ -196,12 +295,82 @@ export function CollectionView() {
     <ScrollArea className="h-full">
       <div className="p-6 flex flex-col gap-6 max-w-2xl">
         {/* Header */}
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-2">
           <h1 className="text-xl font-semibold">{collection.name}</h1>
           {collection.spec_path && (
             <p className="text-xs text-muted-foreground font-mono">
               spec: {collection.spec_path}
             </p>
+          )}
+
+          {/* Import source info + Sync */}
+          {importSource && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-muted-foreground font-mono bg-muted px-2 py-1 rounded">
+                {importSource.owner}/{importSource.repo}
+              </span>
+
+              {/* Branch selector */}
+              <Popover open={branchMenuOpen} onOpenChange={setBranchMenuOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    className="h-7 text-xs gap-1 font-mono px-2"
+                  >
+                    <GitBranchIcon className="size-3" />
+                    {syncBranch || importSource.branch}
+                    <ChevronsUpDownIcon className="size-3 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[250px] p-0" align="start">
+                  <Command>
+                    <CommandInput placeholder="Search branches..." className="h-8 text-xs" />
+                    <CommandList>
+                      <CommandEmpty className="py-3 text-center text-xs text-muted-foreground">
+                        No branches found
+                      </CommandEmpty>
+                      <CommandGroup>
+                        {branches.map((b) => (
+                          <CommandItem
+                            key={b.name}
+                            value={b.name}
+                            onSelect={() => {
+                              setSyncBranch(b.name);
+                              setBranchMenuOpen(false);
+                            }}
+                            className="text-xs font-mono"
+                          >
+                            <CheckIcon
+                              className={cn(
+                                "size-3 mr-2 shrink-0",
+                                syncBranch === b.name ? "opacity-100" : "opacity-0"
+                              )}
+                            />
+                            {b.name}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs gap-1.5"
+                onClick={handleSync}
+                disabled={syncing}
+              >
+                {syncing ? (
+                  <Loader2Icon className="size-3 animate-spin" />
+                ) : (
+                  <RefreshCwIcon className="size-3" />
+                )}
+                {syncing ? "Syncing..." : "Sync"}
+              </Button>
+            </div>
           )}
         </div>
 

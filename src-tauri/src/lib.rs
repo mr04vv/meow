@@ -6,7 +6,7 @@ mod storage;
 
 use commands::collection::{
     create_collection, delete_collection, generate_collection_from_openapi,
-    list_collections, mark_request_user_edited,
+    list_collections, mark_request_user_edited, update_collection_import_source,
 };
 use commands::collection_env::{
     create_collection_environment, list_collection_environments,
@@ -119,6 +119,8 @@ pub fn run() {
             generate_collection_from_proto,
             get_request_grpc_meta,
             get_grpc_docs,
+            // Import source
+            update_collection_import_source,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

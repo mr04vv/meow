@@ -137,6 +137,11 @@ CREATE TABLE IF NOT EXISTS request_grpc_meta (
 );
 "#,
     },
+    Migration {
+        version: 3,
+        description: "Add import_source to collections",
+        sql: "ALTER TABLE collections ADD COLUMN import_source TEXT;",
+    },
 ];
 
 pub fn init_database(app: &AppHandle) -> AppResult<Connection> {

@@ -74,6 +74,7 @@ function HomePage() {
     createCollection,
     generateFromOpenApi,
     generateFromProto,
+    updateImportSource,
     environments,
     activeEnvironmentId,
     setActiveEnvironment,
@@ -507,6 +508,17 @@ function HomePage() {
                 console.error("[Import] Failed to set up environment:", envErr);
               }
             }
+
+            // Save import source for future sync
+            await updateImportSource(rootCollection.id, {
+              owner,
+              repo: repoName,
+              branch,
+              files: files.map((f) => f.path),
+              spec_type: protoFiles.length > 0
+                ? (openapiFiles.length > 0 ? "mixed" : "proto")
+                : "openapi",
+            });
 
             toast.success(`Imported "${collectionName}" successfully`);
             setActiveWorkspace(workspace.id);
