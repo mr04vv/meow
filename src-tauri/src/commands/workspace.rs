@@ -23,6 +23,23 @@ pub async fn create_workspace(
     name: String,
 ) -> Result<Workspace, AppError> {
     let conn = state.0.lock().map_err(|_| AppError::Custom("DB lock poisoned".into()))?;
+
+    // Check for duplicate name
+    let exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM workspaces WHERE name = ?1",
+            rusqlite::params![name],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count > 0)
+        .unwrap_or(false);
+    if exists {
+        return Err(AppError::Custom(format!(
+            "Workspace '{}' already exists",
+            name
+        )));
+    }
+
     let id = Uuid::new_v4().to_string();
     let now = epoch_now();
 

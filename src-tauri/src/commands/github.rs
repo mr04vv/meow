@@ -268,28 +268,42 @@ pub async fn github_list_repos(
     state: State<'_, DbState>,
     query: Option<String>,
     page: Option<u32>,
+    include_external: Option<bool>,
 ) -> Result<Vec<GithubRepo>, AppError> {
     let token = {
         let conn = state.0.lock().map_err(|_| AppError::Custom("DB lock poisoned".into()))?;
         load_token(&conn)?.ok_or_else(|| AppError::Custom("Not authenticated".into()))?
     };
     let octo = build_octocrab(&token)?;
+    let include_external = include_external.unwrap_or(false);
+    let page_num = page.unwrap_or(1).min(255) as u8;
 
-    let repos = if let Some(q) = query {
-        // Search across all repos the user can access (personal + org)
-        let page_num = page.unwrap_or(1).min(255) as u8;
-        let result = octo
-            .search()
-            .repositories(&q)
+    let repos = if let Some(q) = &query {
+        let query_lower = q.to_lowercase();
+
+        // Always fetch user's own repos and filter by query
+        let own_result = octo
+            .current()
+            .list_repos_for_authenticated_user()
+            .type_("all")
+            .sort("updated")
+            .per_page(100)
             .page(page_num)
-            .per_page(30)
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("GitHub search error: {}", e)))?;
+            .unwrap_or_default();
 
-        result
+        let mut own_repos: Vec<GithubRepo> = own_result
             .items
             .into_iter()
+            .filter(|r| {
+                let name = r.name.to_lowercase();
+                let full = r.full_name.as_deref().unwrap_or("").to_lowercase();
+                let desc = r.description.as_deref().unwrap_or("").to_lowercase();
+                name.contains(&query_lower)
+                    || full.contains(&query_lower)
+                    || desc.contains(&query_lower)
+            })
             .map(|r| GithubRepo {
                 id: r.id.0,
                 name: r.name,
@@ -299,16 +313,54 @@ pub async fn github_list_repos(
                 default_branch: r.default_branch.unwrap_or_else(|| "main".into()),
                 html_url: r.html_url.map(|u| u.to_string()).unwrap_or_default(),
             })
-            .collect()
+            .collect();
+
+        // If include_external, fill remaining slots with Search API results
+        if include_external {
+            let remaining = 30usize.saturating_sub(own_repos.len());
+            if remaining > 0 {
+                if let Ok(search_result) = octo
+                    .search()
+                    .repositories(q)
+                    .page(page_num)
+                    .per_page(30)
+                    .send()
+                    .await
+                {
+                    let own_ids: std::collections::HashSet<u64> =
+                        own_repos.iter().map(|r| r.id).collect();
+
+                    let extra: Vec<GithubRepo> = search_result
+                        .items
+                        .into_iter()
+                        .filter(|r| !own_ids.contains(&r.id.0))
+                        .take(remaining)
+                        .map(|r| GithubRepo {
+                            id: r.id.0,
+                            name: r.name,
+                            full_name: r.full_name.unwrap_or_default(),
+                            description: r.description,
+                            private: r.private.unwrap_or(false),
+                            default_branch: r.default_branch
+                                .unwrap_or_else(|| "main".into()),
+                            html_url: r.html_url.map(|u| u.to_string()).unwrap_or_default(),
+                        })
+                        .collect();
+                    own_repos.extend(extra);
+                }
+            }
+        }
+
+        own_repos
     } else {
-        // "all" includes owner, collaborator, and org member repos
+        // No query: list user's own repos
         let result = octo
             .current()
             .list_repos_for_authenticated_user()
             .type_("all")
             .sort("updated")
             .per_page(30)
-            .page(page.unwrap_or(1).min(255) as u8)
+            .page(page_num)
             .send()
             .await
             .map_err(|e| AppError::Custom(format!("GitHub API error: {}", e)))?;

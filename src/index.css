@@ -87,6 +87,11 @@ body {
   background-color: transparent !important;
 }
 
+/* Response body: gutter needs opaque background so text doesn't show through on horizontal scroll */
+.cm-response-body .cm-gutters {
+  background-color: var(--background) !important;
+}
+
 /* Hide scrollbar in URL bar CodeMirror */
 .cm-url-bar .cm-scroller {
   scrollbar-width: none;
