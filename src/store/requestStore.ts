@@ -58,6 +58,15 @@ export interface ResponseData {
   trailers?: Record<string, string>;
 }
 
+interface WorkspaceTabState {
+  tabs: RequestTab[];
+  activeTabId: string | null;
+  responses: Record<string, ResponseData | null>;
+  loading: Record<string, boolean>;
+  docs: Record<string, string | null>;
+  originalSnapshots: Record<string, string>;
+}
+
 interface RequestState {
   tabs: RequestTab[];
   activeTabId: string | null;
@@ -65,6 +74,11 @@ interface RequestState {
   loading: Record<string, boolean>;
   docs: Record<string, string | null>;
   originalSnapshots: Record<string, string>;
+
+  // Workspace tab persistence
+  workspaceTabs: Record<string, WorkspaceTabState>;
+  activeWorkspaceId: string | null;
+  switchWorkspace: (workspaceId: string | null) => void;
 
   addTab: () => void;
   reorderTabs: (fromIndex: number, toIndex: number) => void;
@@ -120,6 +134,37 @@ export const useRequestStore = create<RequestState>((set, get) => {
     loading: {},
     docs: {},
     originalSnapshots: {},
+    workspaceTabs: {},
+    activeWorkspaceId: null,
+
+    switchWorkspace: (workspaceId) =>
+      set((state) => {
+        // Save current workspace tabs
+        const saved: Record<string, WorkspaceTabState> = { ...state.workspaceTabs };
+        if (state.activeWorkspaceId) {
+          saved[state.activeWorkspaceId] = {
+            tabs: state.tabs,
+            activeTabId: state.activeTabId,
+            responses: state.responses,
+            loading: state.loading,
+            docs: state.docs,
+            originalSnapshots: state.originalSnapshots,
+          };
+        }
+
+        // Restore target workspace tabs (or start fresh)
+        const restored = workspaceId ? saved[workspaceId] : null;
+        return {
+          workspaceTabs: saved,
+          activeWorkspaceId: workspaceId,
+          tabs: restored?.tabs ?? [],
+          activeTabId: restored?.activeTabId ?? null,
+          responses: restored?.responses ?? {},
+          loading: restored?.loading ?? {},
+          docs: restored?.docs ?? {},
+          originalSnapshots: restored?.originalSnapshots ?? {},
+        };
+      }),
 
     reorderTabs: (fromIndex, toIndex) =>
       set((state) => {

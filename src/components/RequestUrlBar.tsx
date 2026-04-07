@@ -289,16 +289,28 @@ function SyncButton({ collectionId }: { collectionId: string | null }) {
   const [branches, setBranches] = useState<Array<{ name: string }>>([]);
   const [selectedBranch, setSelectedBranch] = useState<string>("");
 
-  const collection = collectionId ? collections.find((c) => c.id === collectionId) : null;
-  const importSource: ImportSource | null = collection?.import_source
-    ? (() => { try { return JSON.parse(collection.import_source) as ImportSource; } catch { return null; } })()
+  // Walk up parent chain to find root collection with import_source
+  const findImportSourceCollection = () => {
+    if (!collectionId) return null;
+    let current = collections.find((c) => c.id === collectionId);
+    for (let i = 0; i < 10 && current; i++) {
+      if (current.import_source) return current;
+      if (!current.parent_id) break;
+      current = collections.find((c) => c.id === current!.parent_id);
+    }
+    return null;
+  };
+  const sourceCollection = findImportSourceCollection();
+  const importSource: ImportSource | null = sourceCollection?.import_source
+    ? (() => { try { return JSON.parse(sourceCollection.import_source) as ImportSource; } catch { return null; } })()
     : null;
+  const syncCollectionId = sourceCollection?.id ?? collectionId;
 
   useEffect(() => {
     if (importSource) {
       setSelectedBranch(importSource.branch);
     }
-  }, [collection?.import_source]);
+  }, [sourceCollection?.import_source]);
 
   // Load branches when popover opens
   const loadBranches = async () => {
@@ -314,7 +326,7 @@ function SyncButton({ collectionId }: { collectionId: string | null }) {
     }
   };
 
-  if (!importSource || !collectionId) return null;
+  if (!importSource || !syncCollectionId) return null;
 
   const handleSync = async (branch: string) => {
     setSyncing(true);
@@ -333,7 +345,7 @@ function SyncButton({ collectionId }: { collectionId: string | null }) {
           })
         );
         const parsedProto = await invoke("parse_proto", { files: protoContents });
-        await generateFromProto(parsedProto, collectionId, undefined, collection?.workspace_id ?? undefined);
+        await generateFromProto(parsedProto, syncCollectionId, undefined, sourceCollection?.workspace_id ?? undefined);
       }
 
       if (spec_type === "openapi" || (spec_type === "mixed" && openapiFiles.length > 0)) {
@@ -342,16 +354,16 @@ function SyncButton({ collectionId }: { collectionId: string | null }) {
             owner, repo, path, gitRef: branch,
           })) as { content: string; path: string };
           const spec = await invoke("parse_openapi", { content: content.content, filename: path });
-          await generateFromOpenApi(spec as never, "{{BASE_URL}}", collectionId, undefined, collection?.workspace_id ?? undefined);
+          await generateFromOpenApi(spec as never, "{{BASE_URL}}", syncCollectionId, undefined, sourceCollection?.workspace_id ?? undefined);
         }
       }
 
       // Update branch in import_source if changed
       if (branch !== importSource.branch) {
-        await updateImportSource(collectionId, { ...importSource, branch });
+        await updateImportSource(syncCollectionId, { ...importSource, branch });
       }
 
-      await loadRequests(collectionId);
+      await loadRequests(collectionId ?? undefined);
       toast.success("Sync completed");
     } catch (e) {
       toast.error(`Sync failed: ${String(e)}`);
@@ -413,7 +425,7 @@ function SyncButton({ collectionId }: { collectionId: string | null }) {
         className="h-9 w-9 text-muted-foreground"
         onClick={() => handleSync(selectedBranch || importSource.branch)}
         disabled={syncing}
-        title={`Sync from ${importSource.owner}/${importSource.repo}@${selectedBranch || importSource.branch}`}
+        title={`Sync ${importSource.owner}/${importSource.repo}@${selectedBranch || importSource.branch}`}
       >
         {syncing ? (
           <Loader2Icon className="size-3.5 animate-spin" />

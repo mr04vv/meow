@@ -85,10 +85,20 @@ export function CollectionView() {
   const [newIsSecret, setNewIsSecret] = useState(false);
   const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set());
 
-  // Sync state
-  const importSource: ImportSource | null = collection?.import_source
-    ? (() => { try { return JSON.parse(collection.import_source) as ImportSource; } catch { return null; } })()
+  // Walk up parent chain to find collection with import_source
+  const sourceCollection = (() => {
+    let current = collection;
+    for (let i = 0; i < 10 && current; i++) {
+      if (current.import_source) return current;
+      if (!current.parent_id) break;
+      current = collections.find((c) => c.id === current!.parent_id) ?? null;
+    }
+    return null;
+  })();
+  const importSource: ImportSource | null = sourceCollection?.import_source
+    ? (() => { try { return JSON.parse(sourceCollection.import_source) as ImportSource; } catch { return null; } })()
     : null;
+  const syncCollectionId = sourceCollection?.id ?? activeCollectionId;
   const [syncBranch, setSyncBranch] = useState<string>(importSource?.branch ?? "");
   const [branches, setBranches] = useState<Array<{ name: string }>>([]);
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
@@ -112,7 +122,7 @@ export function CollectionView() {
   }, [collection?.import_source]);
 
   const handleSync = useCallback(async () => {
-    if (!importSource || !activeCollectionId) return;
+    if (!importSource || !syncCollectionId) return;
     setSyncing(true);
     try {
       const owner = importSource.owner;
@@ -134,7 +144,7 @@ export function CollectionView() {
           })
         );
         const parsedProto = await invoke("parse_proto", { files: protoContents });
-        await generateFromProto(parsedProto, activeCollectionId, undefined, collection?.workspace_id ?? undefined);
+        await generateFromProto(parsedProto, syncCollectionId, undefined, sourceCollection?.workspace_id ?? undefined);
       }
 
       if (specType === "openapi" || (specType === "mixed" && openapiFiles.length > 0)) {
@@ -143,13 +153,13 @@ export function CollectionView() {
             owner, repo: repoName, path, gitRef: branch,
           })) as { content: string; path: string };
           const spec = await invoke("parse_openapi", { content: content.content, filename: path });
-          await generateFromOpenApi(spec as never, "{{BASE_URL}}", activeCollectionId, undefined, collection?.workspace_id ?? undefined);
+          await generateFromOpenApi(spec as never, "{{BASE_URL}}", syncCollectionId, undefined, sourceCollection?.workspace_id ?? undefined);
         }
       }
 
       // Update branch if changed
       if (branch !== importSource.branch) {
-        await updateImportSource(activeCollectionId, { ...importSource, branch });
+        await updateImportSource(syncCollectionId, { ...importSource, branch });
       }
 
       await loadRequests(activeCollectionId);

@@ -64,7 +64,7 @@ export const Route = createFileRoute("/")({
 });
 
 function HomePage() {
-  const { tabs, activeTabId, responses, loading, docs, addTab, setActiveTab, closeTab, isDirty } =
+  const { tabs, activeTabId, responses, loading, docs, addTab, closeTab, isDirty, switchWorkspace } =
     useRequestStore();
   const { workspaces, activeWorkspaceId, loadWorkspaces, setActiveWorkspace, deleteWorkspace } =
     useWorkspaceStore();
@@ -196,8 +196,8 @@ function HomePage() {
                         key={ws.id}
                         value={ws.name}
                         onSelect={() => {
+                          switchWorkspace(ws.id);
                           setActiveWorkspace(ws.id);
-                          setActiveTab(null);
                           setWsMenuOpen(false);
                         }}
                         className="text-xs"
@@ -262,6 +262,7 @@ function HomePage() {
                     onClick={async () => {
                       await deleteWorkspace(ws.id);
                       if (activeWorkspaceId === ws.id) {
+                        switchWorkspace(null);
                         setActiveWorkspace(null);
                       }
                     }}
@@ -419,6 +420,7 @@ function HomePage() {
               // Create new workspace
               const workspace = await useWorkspaceStore.getState().createWorkspace(collectionName);
               workspaceId = workspace.id;
+              switchWorkspace(workspaceId);
               setActiveWorkspace(workspaceId);
             }
             const rootCollection = await createCollection(collectionName, workspaceId);
