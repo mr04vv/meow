@@ -69,6 +69,7 @@ function HomePage() {
   const { workspaces, activeWorkspaceId, loadWorkspaces, setActiveWorkspace, deleteWorkspace } =
     useWorkspaceStore();
   const {
+    collections,
     activeCollectionId,
     setActiveCollection,
     loadCollections,
@@ -76,6 +77,7 @@ function HomePage() {
     generateFromOpenApi,
     generateFromProto,
     updateImportSource,
+    switchCollectionWorkspace,
     environments,
     activeEnvironmentId,
     setActiveEnvironment,
@@ -110,6 +112,23 @@ function HomePage() {
       loadCollections(activeWorkspaceId);
     }
   }, [activeWorkspaceId, loadCollections]);
+
+  // Restore active collection & env when active tab changes (e.g., after workspace switch)
+  useEffect(() => {
+    if (!activeTab?.collectionId) return;
+    const col = collections.find((c) => c.id === activeTab.collectionId);
+    if (!col) return;
+    // Find root collection (walk up parent chain)
+    let root = col;
+    for (let i = 0; i < 10 && root.parent_id; i++) {
+      const parent = collections.find((c) => c.id === root.parent_id);
+      if (!parent) break;
+      root = parent;
+    }
+    if (root.id !== activeCollectionId) {
+      setActiveCollection(root.id);
+    }
+  }, [activeTabId, collections]);
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -196,6 +215,7 @@ function HomePage() {
                         key={ws.id}
                         value={ws.name}
                         onSelect={() => {
+                          switchCollectionWorkspace(ws.id);
                           switchWorkspace(ws.id);
                           setActiveWorkspace(ws.id);
                           setWsMenuOpen(false);
@@ -262,6 +282,7 @@ function HomePage() {
                     onClick={async () => {
                       await deleteWorkspace(ws.id);
                       if (activeWorkspaceId === ws.id) {
+                        switchCollectionWorkspace(null);
                         switchWorkspace(null);
                         setActiveWorkspace(null);
                       }
@@ -420,6 +441,7 @@ function HomePage() {
               // Create new workspace
               const workspace = await useWorkspaceStore.getState().createWorkspace(collectionName);
               workspaceId = workspace.id;
+              switchCollectionWorkspace(workspaceId);
               switchWorkspace(workspaceId);
               setActiveWorkspace(workspaceId);
             }

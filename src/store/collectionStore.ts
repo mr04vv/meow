@@ -100,6 +100,9 @@ interface CollectionState {
   // Auth
   updateCollectionAuth: (collectionId: string, authType: string | null, authConfig: string | null) => Promise<void>;
 
+  // Workspace state persistence
+  switchCollectionWorkspace: (workspaceId: string | null) => void;
+
   loadCollections: (workspaceId?: string) => Promise<void>;
   loadRequests: (collectionId?: string | null) => Promise<void>;
   generateFromOpenApi: (
@@ -124,6 +127,19 @@ interface CollectionState {
   deleteRequest: (id: string) => Promise<void>;
 }
 
+interface WorkspaceCollectionState {
+  collections: Collection[];
+  requests: Record<string, SavedRequest[]>;
+  activeCollectionId: string | null;
+  environments: CollectionEnvironment[];
+  activeEnvironmentId: string | null;
+  variableKeys: VariableKey[];
+  variables: VariableWithValue[];
+}
+
+const workspaceCollectionCache: Record<string, WorkspaceCollectionState> = {};
+let currentCollectionWorkspaceId: string | null = null;
+
 export const useCollectionStore = create<CollectionState>((set, get) => ({
   collections: [],
   requests: {},
@@ -131,6 +147,49 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
   error: null,
 
   activeCollectionId: null,
+
+  switchCollectionWorkspace: (workspaceId) => {
+    // Save current state
+    if (currentCollectionWorkspaceId) {
+      const state = get();
+      workspaceCollectionCache[currentCollectionWorkspaceId] = {
+        collections: state.collections,
+        requests: state.requests,
+        activeCollectionId: state.activeCollectionId,
+        environments: state.environments,
+        activeEnvironmentId: state.activeEnvironmentId,
+        variableKeys: state.variableKeys,
+        variables: state.variables,
+      };
+    }
+
+    currentCollectionWorkspaceId = workspaceId;
+
+    // Restore target state
+    const cached = workspaceId ? workspaceCollectionCache[workspaceId] : null;
+    if (cached) {
+      set({
+        collections: cached.collections,
+        requests: cached.requests,
+        activeCollectionId: cached.activeCollectionId,
+        environments: cached.environments,
+        activeEnvironmentId: cached.activeEnvironmentId,
+        variableKeys: cached.variableKeys,
+        variables: cached.variables,
+      });
+    } else {
+      set({
+        collections: [],
+        requests: {},
+        activeCollectionId: null,
+        environments: [],
+        activeEnvironmentId: null,
+        variableKeys: [],
+        variables: [],
+      });
+    }
+  },
+
   setActiveCollection: (id) => {
     set({ activeCollectionId: id });
     if (id) {
