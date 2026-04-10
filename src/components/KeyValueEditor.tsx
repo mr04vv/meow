@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -19,6 +20,66 @@ interface Props {
   valuePlaceholder?: string;
 }
 
+/** Placeholder row that buffers input locally until blur/Enter, then promotes to a real pair */
+function NewRow({
+  keyPlaceholder,
+  valuePlaceholder,
+  onAdd,
+}: {
+  keyPlaceholder: string;
+  valuePlaceholder: string;
+  onAdd: (pair: Omit<KeyValuePair, "id">) => void;
+}) {
+  const [key, setKey] = useState("");
+  const [value, setValue] = useState("");
+  const [desc, setDesc] = useState("");
+
+  const flush = () => {
+    if (!key && !value) return;
+    onAdd({ key, value, description: desc, enabled: true });
+    setKey("");
+    setValue("");
+    setDesc("");
+  };
+
+  return (
+    <TableRow className="hover:bg-muted/30">
+      <TableCell className="px-2 py-1 w-8" />
+      <TableCell className="px-2 py-1">
+        <Input
+          placeholder={keyPlaceholder}
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          onBlur={flush}
+          onKeyDown={(e) => { if (e.key === "Enter") flush(); }}
+          className="h-7 font-mono text-[13px] border-0 bg-transparent px-1 focus-visible:ring-1 focus-visible:ring-ring"
+        />
+      </TableCell>
+      <TableCell className="px-2 py-1">
+        <Input
+          placeholder={valuePlaceholder}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onBlur={flush}
+          onKeyDown={(e) => { if (e.key === "Enter") flush(); }}
+          className="h-7 font-mono text-[13px] border-0 bg-transparent px-1 focus-visible:ring-1 focus-visible:ring-ring"
+        />
+      </TableCell>
+      <TableCell className="px-2 py-1">
+        <Input
+          placeholder="Description"
+          value={desc}
+          onChange={(e) => setDesc(e.target.value)}
+          onBlur={flush}
+          onKeyDown={(e) => { if (e.key === "Enter") flush(); }}
+          className="h-7 text-[13px] border-0 bg-transparent px-1 focus-visible:ring-1 focus-visible:ring-ring text-muted-foreground"
+        />
+      </TableCell>
+      <TableCell className="px-2 py-1 w-8" />
+    </TableRow>
+  );
+}
+
 export function KeyValueEditor({
   pairs,
   onChange,
@@ -26,31 +87,16 @@ export function KeyValueEditor({
   valuePlaceholder = "Value",
 }: Props) {
   const update = (id: string, field: keyof KeyValuePair, val: string | boolean) => {
-    const updated = pairs.map((p) => (p.id === id ? { ...p, [field]: val } : p));
-    // Auto-add empty row if the last row has a key
-    const last = updated[updated.length - 1];
-    if (last && (last.key || last.value)) {
-      onChange([
-        ...updated,
-        { id: `kv-${Date.now()}`, key: "", value: "", description: "", enabled: true },
-      ]);
-    } else {
-      onChange(updated);
-    }
+    onChange(pairs.map((p) => (p.id === id ? { ...p, [field]: val } : p)));
   };
 
   const remove = (id: string) => {
     onChange(pairs.filter((p) => p.id !== id));
   };
 
-  // Ensure at least one empty row
-  const rows =
-    pairs.length === 0 || pairs[pairs.length - 1].key || pairs[pairs.length - 1].value
-      ? [
-          ...pairs,
-          { id: `kv-new-${Date.now()}`, key: "", value: "", description: "", enabled: true },
-        ]
-      : pairs;
+  const addPair = (pair: Omit<KeyValuePair, "id">) => {
+    onChange([...pairs, { ...pair, id: crypto.randomUUID() }]);
+  };
 
   return (
     <div className="w-full overflow-x-auto">
@@ -65,61 +111,57 @@ export function KeyValueEditor({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {rows.map((pair, idx) => {
-          const isNewRow = idx === rows.length - 1 && !pair.key && !pair.value;
-          return (
-            <TableRow
-              key={pair.id}
-              className={`hover:bg-muted/30 ${!pair.enabled && !isNewRow ? "opacity-50" : ""}`}
-            >
-              <TableCell className="px-2 py-1 w-8">
-                {!isNewRow && (
-                  <Checkbox
-                    checked={pair.enabled}
-                    onCheckedChange={(v) => update(pair.id, "enabled", !!v)}
-                    className="size-3.5"
-                  />
-                )}
-              </TableCell>
-              <TableCell className="px-2 py-1">
-                <Input
-                  placeholder={isNewRow ? keyPlaceholder : ""}
-                  value={pair.key}
-                  onChange={(e) => update(pair.id, "key", e.target.value)}
-                  className="h-7 font-mono text-[13px] border-0 bg-transparent px-1 focus-visible:ring-1 focus-visible:ring-ring"
-                />
-              </TableCell>
-              <TableCell className="px-2 py-1">
-                <Input
-                  placeholder={isNewRow ? valuePlaceholder : ""}
-                  value={pair.value}
-                  onChange={(e) => update(pair.id, "value", e.target.value)}
-                  className="h-7 font-mono text-[13px] border-0 bg-transparent px-1 focus-visible:ring-1 focus-visible:ring-ring"
-                />
-              </TableCell>
-              <TableCell className="px-2 py-1">
-                <Input
-                  placeholder={isNewRow ? "Description" : ""}
-                  value={pair.description ?? ""}
-                  onChange={(e) => update(pair.id, "description", e.target.value)}
-                  className="h-7 text-[13px] border-0 bg-transparent px-1 focus-visible:ring-1 focus-visible:ring-ring text-muted-foreground"
-                />
-              </TableCell>
-              <TableCell className="px-2 py-1 w-8">
-                {!isNewRow && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                    onClick={() => remove(pair.id)}
-                  >
-                    <Trash2Icon className="size-3" />
-                  </Button>
-                )}
-              </TableCell>
-            </TableRow>
-          );
-        })}
+        {pairs.map((pair) => (
+          <TableRow
+            key={pair.id}
+            className={`hover:bg-muted/30 ${!pair.enabled ? "opacity-50" : ""}`}
+          >
+            <TableCell className="px-2 py-1 w-8">
+              <Checkbox
+                checked={pair.enabled}
+                onCheckedChange={(v) => update(pair.id, "enabled", !!v)}
+                className="size-3.5"
+              />
+            </TableCell>
+            <TableCell className="px-2 py-1">
+              <Input
+                value={pair.key}
+                onChange={(e) => update(pair.id, "key", e.target.value)}
+                className="h-7 font-mono text-[13px] border-0 bg-transparent px-1 focus-visible:ring-1 focus-visible:ring-ring"
+              />
+            </TableCell>
+            <TableCell className="px-2 py-1">
+              <Input
+                value={pair.value}
+                onChange={(e) => update(pair.id, "value", e.target.value)}
+                className="h-7 font-mono text-[13px] border-0 bg-transparent px-1 focus-visible:ring-1 focus-visible:ring-ring"
+              />
+            </TableCell>
+            <TableCell className="px-2 py-1">
+              <Input
+                value={pair.description ?? ""}
+                onChange={(e) => update(pair.id, "description", e.target.value)}
+                className="h-7 text-[13px] border-0 bg-transparent px-1 focus-visible:ring-1 focus-visible:ring-ring text-muted-foreground"
+              />
+            </TableCell>
+            <TableCell className="px-2 py-1 w-8">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                onClick={() => remove(pair.id)}
+              >
+                <Trash2Icon className="size-3" />
+              </Button>
+            </TableCell>
+          </TableRow>
+        ))}
+
+        <NewRow
+          keyPlaceholder={keyPlaceholder}
+          valuePlaceholder={valuePlaceholder}
+          onAdd={addPair}
+        />
       </TableBody>
     </Table>
     </div>

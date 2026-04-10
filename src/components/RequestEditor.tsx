@@ -6,7 +6,6 @@ import { json } from "@codemirror/lang-json";
 import { keymap } from "@codemirror/view";
 import { Prec } from "@codemirror/state";
 import { selectAll } from "@codemirror/commands";
-import { AuthEditor } from "@/components/AuthEditor";
 import { CodeMirrorUrlBar } from "@/components/CodeMirrorUrlBar";
 import { KeyValueEditor } from "@/components/KeyValueEditor";
 import { Button } from "@/components/ui/button";
@@ -94,14 +93,6 @@ export function RequestEditor({ tab, hideUrlBar }: Props) {
   const collectionSettings = collection
     ? { auth_type: collection.auth_type, auth_config: collection.auth_config }
     : null;
-
-  const collectionAuthSummary =
-    collection?.auth_type
-      ? {
-          type: collection.auth_type as AuthConfig["type"],
-          collectionName: collection.name,
-        }
-      : null;
 
   const update = (updates: Partial<RequestTab>) => {
     updateTab(tab.id, updates);
@@ -389,16 +380,6 @@ export function RequestEditor({ tab, hideUrlBar }: Props) {
               >
                 Body
               </TabsTrigger>
-              <TabsTrigger
-                value="auth"
-                className="h-8 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none text-xs px-3"
-              >
-                Auth
-                {(tab.auth.type !== "none" ||
-                  (tab.inheritAuth && collectionSettings?.auth_type)) && (
-                  <span className="ml-1.5 size-1.5 rounded-full bg-green-500 inline-block" />
-                )}
-              </TabsTrigger>
             </TabsList>
           </div>
 
@@ -449,15 +430,6 @@ export function RequestEditor({ tab, hideUrlBar }: Props) {
               />
             </TabsContent>
 
-            <TabsContent value="auth" className="p-3 m-0">
-              <AuthEditor
-                auth={tab.auth}
-                onChange={(auth) => update({ auth })}
-                collectionAuth={collectionAuthSummary}
-                inheritAuth={tab.inheritAuth}
-                onInheritChange={(inherit) => update({ inheritAuth: inherit })}
-              />
-            </TabsContent>
           </div>
         </Tabs>
       </div>

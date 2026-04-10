@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { CheckIcon, ChevronsUpDownIcon, GitBranchIcon, Loader2Icon, RefreshCwIcon, SaveIcon, SendHorizonalIcon } from "lucide-react";
+import { CheckIcon, ChevronsUpDownIcon, GitBranchIcon, Loader2Icon, RefreshCwIcon, RotateCcwIcon, SaveIcon, SendHorizonalIcon } from "lucide-react";
 import { toast } from "sonner";
 import { CodeMirrorUrlBar } from "@/components/CodeMirrorUrlBar";
 import { Button } from "@/components/ui/button";
@@ -243,6 +243,10 @@ export function RequestUrlBar({ tab }: Props) {
           </div>
         </div>
 
+        {tab.savedRequestId && (
+          <ResetButton requestId={tab.savedRequestId} collectionId={tab.collectionId} tabId={tab.id} />
+        )}
+
         <Button
           variant="ghost"
           size="icon"
@@ -434,5 +438,60 @@ function SyncButton({ collectionId }: { collectionId: string | null }) {
         )}
       </Button>
     </div>
+  );
+}
+
+function ResetButton({ requestId, collectionId, tabId }: { requestId: string; collectionId: string | null; tabId: string }) {
+  const { loadRequests } = useCollectionStore();
+  const { updateTab } = useRequestStore();
+  const [resetting, setResetting] = useState(false);
+
+  if (!requestId) return null;
+
+  const handleReset = async () => {
+    setResetting(true);
+    try {
+      // 1. Reset request to original spec values in DB
+      await invoke("reset_request_to_original", { requestId });
+
+      // 2. Reload from DB and update tab
+      const req = (await invoke("get_request", { id: requestId })) as {
+        url: string;
+        body: string | null;
+        headers: Record<string, string>;
+        query_params: Record<string, string>;
+      };
+
+      updateTab(tabId, {
+        url: req.url,
+        body: req.body ?? "",
+        headers: Object.entries(req.headers ?? {}).map(([key, value]) => ({ id: crypto.randomUUID(), key, value, enabled: true })),
+        queryParams: Object.entries(req.query_params ?? {}).map(([key, value]) => ({ id: crypto.randomUUID(), key, value, enabled: true })),
+      });
+
+      if (collectionId) await loadRequests(collectionId);
+      toast.success("Reset to spec");
+    } catch (e) {
+      toast.error(`Reset failed: ${String(e)}`);
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-9 w-9 text-muted-foreground shrink-0"
+      onClick={handleReset}
+      disabled={resetting}
+      title="Reset to spec definition"
+    >
+      {resetting ? (
+        <Loader2Icon className="size-3.5 animate-spin" />
+      ) : (
+        <RotateCcwIcon className="size-3.5" />
+      )}
+    </Button>
   );
 }

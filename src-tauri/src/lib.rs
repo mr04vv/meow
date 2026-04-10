@@ -6,7 +6,8 @@ mod storage;
 
 use commands::collection::{
     create_collection, delete_collection, generate_collection_from_openapi,
-    list_collections, mark_request_user_edited, update_collection_import_source,
+    list_collections, mark_request_user_edited, reset_request_to_original,
+    update_collection_import_source,
 };
 use commands::collection_env::{
     create_collection_environment, list_collection_environments,
@@ -121,6 +122,7 @@ pub fn run() {
             get_grpc_docs,
             // Import source
             update_collection_import_source,
+            reset_request_to_original,
         ])
         .on_window_event(|_window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {

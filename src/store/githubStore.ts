@@ -34,6 +34,11 @@ const OPENAPI_PATTERNS = [
   /api\.(yaml|yml|json)$/i,
   /api-spec\.(yaml|yml|json)$/i,
   /api-docs\.(yaml|yml|json)$/i,
+  /spec\.(yaml|yml|json)$/i,
+  /schema\.(yaml|yml|json)$/i,
+  /\.openapi\.(yaml|yml|json)$/i,
+  // Files inside openapi/, open-api/, doc/, docs/ directories
+  /(^|\/)(openapi|open-api|docs?)\/.+\.(yaml|yml|json)$/i,
 ];
 
 const PROTO_PATTERNS = [/\.proto$/i];

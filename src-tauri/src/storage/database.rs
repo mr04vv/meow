@@ -142,6 +142,17 @@ CREATE TABLE IF NOT EXISTS request_grpc_meta (
         description: "Add import_source to collections",
         sql: "ALTER TABLE collections ADD COLUMN import_source TEXT;",
     },
+    Migration {
+        version: 4,
+        description: "Add original request data for reset",
+        sql: r#"
+ALTER TABLE requests ADD COLUMN original_url TEXT;
+ALTER TABLE requests ADD COLUMN original_headers TEXT;
+ALTER TABLE requests ADD COLUMN original_query_params TEXT;
+ALTER TABLE requests ADD COLUMN original_body TEXT;
+UPDATE requests SET original_url = url, original_headers = headers, original_query_params = query_params, original_body = body WHERE original_url IS NULL;
+"#,
+    },
 ];
 
 pub fn init_database(app: &AppHandle) -> AppResult<Connection> {

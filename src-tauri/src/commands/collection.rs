@@ -243,9 +243,9 @@ pub async fn generate_collection_from_openapi(
                 });
                 let docs_json = serde_json::to_string(&docs).ok();
 
-                // Spec changed and not user-edited — update
+                // Spec changed and not user-edited — update (also refresh original values)
                 conn.execute(
-                    "UPDATE requests SET collection_id=?1, name=?2, method=?3, url=?4, headers=?5, query_params=?6, body=?7, sort_order=?8, updated_at=?9 WHERE id=?10",
+                    "UPDATE requests SET collection_id=?1, name=?2, method=?3, url=?4, headers=?5, query_params=?6, body=?7, sort_order=?8, updated_at=?9, original_url=?4, original_headers=?5, original_query_params=?6, original_body=?7 WHERE id=?10",
                     rusqlite::params![
                         collection_id, request_name, op.method, url,
                         headers_json, query_params_json, body,
@@ -274,8 +274,8 @@ pub async fn generate_collection_from_openapi(
                 // New operation — create request
                 let req_id = Uuid::new_v4().to_string();
                 conn.execute(
-                    "INSERT INTO requests (id, collection_id, name, method, url, headers, query_params, body, sort_order, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    "INSERT INTO requests (id, collection_id, name, method, url, headers, query_params, body, sort_order, created_at, updated_at, original_url, original_headers, original_query_params, original_body)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?5, ?6, ?7, ?8)",
                     rusqlite::params![
                         req_id, collection_id, request_name, op.method, url,
                         headers_json, query_params_json, body,
@@ -320,6 +320,29 @@ pub async fn mark_request_user_edited(
     let conn = state.0.lock().map_err(|_| AppError::Custom("DB lock poisoned".into()))?;
     conn.execute(
         "UPDATE request_openapi_meta SET user_edited = 1 WHERE request_id = ?1",
+        rusqlite::params![request_id],
+    )?;
+    Ok(())
+}
+
+/// Reset a request to its original spec-defined values
+#[tauri::command]
+pub async fn reset_request_to_original(
+    state: State<'_, DbState>,
+    request_id: String,
+) -> Result<(), AppError> {
+    let conn = state.0.lock().map_err(|_| AppError::Custom("DB lock poisoned".into()))?;
+    // Restore original values and reset user_edited flag
+    conn.execute(
+        "UPDATE requests SET url = COALESCE(original_url, url), headers = COALESCE(original_headers, headers), query_params = COALESCE(original_query_params, query_params), body = COALESCE(original_body, body), updated_at = ?2 WHERE id = ?1",
+        rusqlite::params![request_id, epoch_now()],
+    )?;
+    conn.execute(
+        "UPDATE request_openapi_meta SET user_edited = 0 WHERE request_id = ?1",
+        rusqlite::params![request_id],
+    )?;
+    conn.execute(
+        "UPDATE request_grpc_meta SET user_edited = 0 WHERE request_id = ?1",
         rusqlite::params![request_id],
     )?;
     Ok(())
@@ -801,9 +824,9 @@ pub async fn generate_collection_from_proto(
                     skipped += 1;
                     continue;
                 }
-                // Update existing request
+                // Update existing request (also refresh original values)
                 conn.execute(
-                    "UPDATE requests SET name=?1, body=?2, updated_at=?3, sort_order=?4 WHERE id=?5",
+                    "UPDATE requests SET name=?1, body=?2, updated_at=?3, sort_order=?4, original_body=?2 WHERE id=?5",
                     rusqlite::params![
                         request_name,
                         method.input_schema_json,
@@ -827,8 +850,8 @@ pub async fn generate_collection_from_proto(
                 // Create new request
                 let req_id = Uuid::new_v4().to_string();
                 conn.execute(
-                    "INSERT INTO requests (id, collection_id, name, method, url, headers, query_params, body, sort_order, created_at, updated_at, request_type)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    "INSERT INTO requests (id, collection_id, name, method, url, headers, query_params, body, sort_order, created_at, updated_at, request_type, original_url, original_headers, original_query_params, original_body)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?5, ?6, ?7, ?8)",
                     rusqlite::params![
                         req_id,
                         root_id,
